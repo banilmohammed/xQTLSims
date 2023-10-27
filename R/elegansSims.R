@@ -101,7 +101,7 @@ max.gen=5
     FN=replicate(starting.sample.size*(1-selfing.rate)*brood.size.mating,
                  Meiosis::cross_geno(father = ind, mother = ind, positions = imputed.positions, xoparam=xoparam), 
                        simplify=F)
-    herm.index=sort(sample.int(length(FN), size=.5*length(F2.mated)))
+    herm.index=sort(sample.int(length(FN), size=.5*length(FN)))
     male.index=which(!((1:length(FN)) %in% herm.index))
     
     #if it selfs, all hermaphrodites
@@ -109,8 +109,8 @@ max.gen=5
         F2.selfed=replicate(starting.sample.size*(selfing.rate)*brood.size.selfing,
                      Meiosis::cross_geno(father = ind2, mother = ind2, positions = imputed.positions, xoparam=xoparam), 
                            simplify=F)
-        herm.index=c(herm.index,length(F2.mated)+seq(1,length(F2.selfed)))
-        FN=c(F2.mated, F2.selfed)
+        herm.index=c(herm.index,length(FN)+seq(1,length(F2.selfed)))
+        FN=c(FN, F2.selfed)
     }
     
     mated.herm=sample(herm.index, size=length(male.index))
