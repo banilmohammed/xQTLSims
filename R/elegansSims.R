@@ -1,5 +1,7 @@
 library(xQTLStats)
 library(Meiosis)
+library(vcfR)
+library(qs)
 #some more complex simulations here 
 
 #optional for doing simulations 
@@ -26,14 +28,60 @@ getGmapPositions=function(vcf.cross, gmap, uchr) {
             SIMPLIFY=F)
 
 }
+#genetic map from F10 AIL 
+gmapRef=readRDS('/data0/elegans/xQTLSims/geneticMapXQTLsnplist.rds')
+#normalize map to what's expected from F2
+#https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1000419
+gmapRef$map=gmapRef$map/5 #5.3
+#reorder
+gmapRef=gmapRef[,c('map', 'chrom', 'pos')]
+#rename columns (ppos = physical pos)
+names(gmapRef)[3]='ppos'
+gmapRef[,'chrom']=as.character(gmapRef[,'chrom'])
+gmapRef=split(gmapRef, gmapRef$chrom)
 
-data(crosses.to.parents)
+gmap=gmapRef
+sapply(gmap, function(x) max(x$map))
+gmap$X$map=gmap$X$map*(51/max(gmap$X$map))
 
+#data(crosses.to.parents)
 #genetic maps 
-gmaps=readRDS(system.file('reference', 'yeast_gmaps.RDS', package='xQTLStats'))
+#gmaps=readRDS(system.file('reference', 'yeast_gmaps.RDS', package='xQTLStats'))
 
 #reference vcf (assume ploidy=1)
-ref.vcf=system.file('reference', 'parents_w_svar_sorted.vcf.gz', package='xQTLStats')
+#ref.vcf=system.file('reference', 'parents_w_svar_sorted.vcf.gz', package='xQTLStats')
+
+#pretty intensive memory usage here 
+big.vcf=vcfR::read.vcfR('/data0/elegans/xQTLSims/WI.20220216.impute.isotype.vcf.gz')
+qsave(big.vcf, file='/data0/elegans/xQTLSims/WI.20220216.vcf.qs')
+
+vcf=qread('/data0/elegans/xQTLSims/WI.20220216.vcf.qs')
+#just get biallelic variants for now 
+vcf=vcf[vcfR::is.biallelic(vcf),]
+#get genotypes
+gt=vcfR::extract.gt(vcf)
+
+p1.name='N2'
+p2.name='XZ1516'
+
+#save as R object
+#extract genos for parents 
+gt.sub=gt[,c(p1.name,p2.name)]
+#find variant sites
+gt.sub=gt.sub[gt.sub[,1]!=gt.sub[,2],]
+#dump sites with missing info for now
+gt.sub=gt.sub[!( is.na(gt.sub[,1]) | is.na(gt.sub[,2])),]
+gt.sub=gt.sub[ !(gt.sub[,1]=='0|1' | gt.sub[,1]=='1|0' | 
+                gt.sub[,2]=='0|1' | gt.sub[,2]=='1|0' ),]
+#remove more complex structural stuff or mitochondrial variants for now
+gt.sub=gt.sub[!grepl('simple|deletion|complex|duplication|chrM', rownames(gt.sub)),]
+#subset vcf ile
+vcf.cross=vcf[match(rownames(gt.sub), rownames(gt)), samples=c(p1.name,p2.name)]
+#generate sno ID
+vcf.cross=vcfR::addID(vcf.cross)
+
+
+
 
 #assuming input vcf with haploid parents and haploid specific variant calls 
 # [1] "273614xa" "BYa"      "CBS2888a" "CLIB219x" "CLIB413a" "I14a"    
@@ -44,20 +92,28 @@ ref.vcf=system.file('reference', 'parents_w_svar_sorted.vcf.gz', package='xQTLSt
 
 
 #specify cross (see crosses.to.parents)
-cross='A'
+#cross='A'
 
 #get the two parent names 
-p1.name=crosses.to.parents[[cross]][1]
-p2.name=crosses.to.parents[[cross]][2]
+#p1.name=crosses.to.parents[[cross]][1]
+#p2.name=crosses.to.parents[[cross]][2]
 
 #extract parental genotypes at variant sites between those parents from a reference vcf
-vcf.cross=getCrossVCF(ref.vcf,p1.name, p2.name)
+#vcf.cross=getCrossVCF(ref.vcf,p1.name, p2.name)
 #vcf.cross
-gmap=gmaps[['A']]
+#gmap=gmaps[['A']]
 
 eg.GT=vcfR::extract.gt(vcf.cross)
-uchr=paste0('chr', as.roman(1:16))
+#recode
+eg.GT[eg.GT=='0|0']=0
+eg.GT[eg.GT=='1|1']=1
+eg.GT=matrix(as.numeric(eg.GT), nrow(eg.GT), ncol(eg.GT))
+
+uchr=c(as.character(as.roman(1:5)), 'X') #paste0('chr', as.roman(1:16))
+
+
 imputed.positions=jitterGmapVector(getGmapPositions(vcf.cross, gmap, uchr))
+
 
 #how many chromosomes
 n_chr=length(imputed.positions)
@@ -80,7 +136,7 @@ selfing.rate=.1
 
 max.per.gen=1e4
 
-max.gen=5
+max.gen=12
 
 
  #parental haplotypes
