@@ -1,12 +1,16 @@
+#some more complex simulations here 
 library(xQTLStats)
-#library(Meiosis)
 library(vcfR)
 library(qs)
+#switch to AlphaSimR for simulation backend 
 library(AlphaSimR)
-#some more complex simulations here 
+#library(Meiosis)
 
-#optional for doing simulations 
-#remotes::install_url("https://cran.microsoft.com/snapshot/2017-09-17/src/contrib/Meiosis_1.0.2.tar.gz")
+#unique chromosomes 
+uchr=c(as.character(as.roman(1:5)), 'X') #paste0('chr', as.roman(1:16))
+
+
+#add jitter to a genetic map 
 jitterGmapVector=function(themap, amount=1e-6) {
     for (i in 1:length(themap)) {
          n <- length(themap[[i]])
@@ -14,6 +18,8 @@ jitterGmapVector=function(themap, amount=1e-6) {
     }
     return(themap)
 }
+
+#convert physical position to genetic map position 
 getGmapPositions=function(vcf.cross, gmap, uchr) {
     #get physical position, split by chromosome
     p.by.chr=split(vcfR::getPOS(vcf.cross),vcfR::getCHROM(vcf.cross))
@@ -23,29 +29,46 @@ getGmapPositions=function(vcf.cross, gmap, uchr) {
    #where to put the variant sites, impute onto gmap
     imputed.positions=mapply( 
            function(x, y){
-                approxfun(y$ppos, y$map, rule=2,na.rm=T)(x)
+                approxfun(y$ppos, y$map, rule=2)(x)
             },
             x=p.by.chr, y=gmap,
             SIMPLIFY=F)
 
 }
-#genetic map from F10 AIL 
-gmapRef=readRDS('/data0/elegans/xQTLSims/geneticMapXQTLsnplist.rds')
-#normalize map to what's expected from F2
-#https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1000419
-gmapRef$map=gmapRef$map/5 #5.3
-#reorder
-gmapRef=gmapRef[,c('map', 'chrom', 'pos')]
-#rename columns (ppos = physical pos)
-names(gmapRef)[3]='ppos'
-gmapRef[,'chrom']=as.character(gmapRef[,'chrom'])
-gmapRef=split(gmapRef, gmapRef$chrom)
 
-gmap=gmapRef
-sapply(gmap, function(x) max(x$map))
-gmap$X$map=gmap$X$map*(51/max(gmap$X$map))
-sapply(gmap, function(x) max(x$map))
+#input is rds object of Rockman N2 x Hawaii F10 AIL rils genetic map
+#output is genetic map for F2 progeny
+#note units here are centimorgans
+restructureGeneticMap=function(gmap.rds, expansion.factor=1/5, expandX=T){
+    #genetic map from F10 AIL 
+    gmapRef=readRDS(gmap.rds) #'/data0/elegans/xQTLSims/geneticMapXQTLsnplist.rds')
+    #normalize map to what's expected from F2
+    #https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1000419
+    gmapRef$map=gmapRef$map*expansion.factor#5.3
+    #reorder
+    gmapRef=gmapRef[,c('map', 'chrom', 'pos')]
+    #rename columns (ppos = physical pos)
+    names(gmapRef)[3]='ppos'
+    gmapRef[,'chrom']=as.character(gmapRef[,'chrom'])
+    gmapRef=split(gmapRef, gmapRef$chrom)
 
+    gmap=gmapRef
+    #sapply(gmap, function(x) max(x$map))
+    #force obligate chiasma on X
+    if(expandX) {
+    gmap$X$map=gmap$X$map*(51/max(gmap$X$map)) 
+    }
+
+    return(gmap)
+}
+
+gmap.file='/data0/elegans/xQTLSims/geneticMapXQTLsnplist.rds'
+
+
+gmap=restructureGeneticMap(gmap.file)
+
+
+#sapply(gmap, function(x) max(x$map))
 #data(crosses.to.parents)
 #genetic maps 
 #gmaps=readRDS(system.file('reference', 'yeast_gmaps.RDS', package='xQTLStats'))
@@ -54,77 +77,110 @@ sapply(gmap, function(x) max(x$map))
 #ref.vcf=system.file('reference', 'parents_w_svar_sorted.vcf.gz', package='xQTLStats')
 
 #pretty intensive memory usage here 
-#big.vcf=vcfR::read.vcfR('/data0/elegans/xQTLSims/WI.20220216.impute.isotype.vcf.gz')
-#qsave(big.vcf, file='/data0/elegans/xQTLSims/WI.20220216.vcf.qs')
+elegans.isotypes.vcf='/data0/elegans/xQTLSims/WI.20220216.impute.isotype.vcf.gz'
 
-vcf=qread('/data0/elegans/xQTLSims/WI.20220216.vcf.qs')
-#just get biallelic variants for now 
-vcf=vcf[vcfR::is.biallelic(vcf),]
-#get genotypes
-gt=vcfR::extract.gt(vcf)
+#filtered vcf as qsave object
+elegans.isotypes.vcf.qs='/data0/elegans/xQTLSims/WI.20220216.vcf.qs'
 
-p1.name='N2'
-p2.name='XZ1516'
+#filtered numeric gt calls from vcf  as qsave object
+elegans.isotypes.vcf.gt.qs='/data0/elegans/xQTLSims/WI.20220216.vcf.GT.qs'
 
-#save as R object
-#extract genos for parents 
-gt.sub=gt[,c(p1.name,p2.name)]
-#find variant sites
-gt.sub=gt.sub[gt.sub[,1]!=gt.sub[,2],]
-#dump sites with missing info for now
-gt.sub=gt.sub[!( is.na(gt.sub[,1]) | is.na(gt.sub[,2])),]
-gt.sub=gt.sub[ !(gt.sub[,1]=='0|1' | gt.sub[,1]=='1|0' | 
-                gt.sub[,2]=='0|1' | gt.sub[,2]=='1|0' ),]
-#remove more complex structural stuff or mitochondrial variants for now
-gt.sub=gt.sub[!grepl('simple|deletion|complex|duplication|chrM|MtDNA', rownames(gt.sub)),]
-#subset vcf ile
-vcf.cross=vcf[match(rownames(gt.sub), rownames(gt)), samples=c(p1.name,p2.name)]
-#generate sno ID
-vcf.cross=vcfR::addID(vcf.cross)
+preprocessVCF=function(elegans.isotypes.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs) {
+    vcf=vcfR::read.vcfR(elegans.isotypes.vcf)
+    vcf=vcf[vcfR::is.biallelic(vcf),]
 
-#assuming input vcf with haploid parents and haploid specific variant calls 
-# [1] "273614xa" "BYa"      "CBS2888a" "CLIB219x" "CLIB413a" "I14a"    
-# [7] "M22"      "PW5a"     "RMx"      "Y10x"     "YJM145x"  "YJM454a" 
-#[13] "YJM978x"  "YJM981x"  "YPS1009x" "YPS163a"
+    gt=vcfR::extract.gt(vcf, as.numeric=T)
+    #recode hets as NA
+    gt[gt=='0|1']=NA
+    gt[gt=='1|0']=NA
+    gt[gt=='0|0']=0
+    gt[gt=='1|1']=1
+    #this conversion should force anything that isn't homozygous to NA
+    gt2=matrix(as.numeric(gt),ncol=ncol(gt))
+    rownames(gt2)=rownames(gt)
+    colnames(gt2)=colnames(gt)
+    gt=gt2
+    rm(gt2)
+    
+    qsave(vcf, file=elegans.isotypes.vcf.qs)
+    qsave(gt, file=elegans.isotypes.vcf.gt.qs)
+    
+    return(NULL) #list(vcf=vcf, gt=gt))
+}
 
-#specify sample size
+#run once, Laura skip this 
+preprocessVCF(elegans.isotype.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs)
+                           , 
+#Laura load these 
+vcf=qread(elegans.isotypes.vcf.qs)
+gt=qread(elegans.isotypes.vcf.gt.qs)
+                      
+
+p.names=c(
+'N2', 
+'ECA191', 
+'QG2832' ,
+'NIC195' ,
+'XZ1516' ,
+'QX1791' ,
+'QX1211',
+'ECA369' ,
+'XZ1514',
+'ECA738' ,
+'ECA760',
+'ECA1255')
+
+#take the larger vcf,  genotype calls, and a subset of parents 
+#extract segregating sites 
+#return an alphaSimR founder population
+createFounderPop=function(vcf, gt, p.names) { 
+    gt.sub=gt[,colnames(gt) %in% p.names]
+
+    #monomorphic=apply(gt.sub, 1, function(x) all.equal(x))
+    #monomorphic sites 
+    #faster to do this with math
+    rSg=rowSums(gt.sub)
+    #sites with hets 
+    sum(is.na(rSg))
+    #sites all ref
+    sum(rSg==0, na.rm=T)
+    #sites all alt
+    sum(rSg==length(p.names), na.rm=T)
+    #sites mito
+    sum(grepl('MtDNA', rownames(gt.sub)))
+
+    bad.sites= is.na(rSg) | rSg==0 | rSg==length(p.names)  | grepl('MtDNA', rownames(gt.sub))
+
+    gt.sub=gt.sub[-which(bad.sites),]
+    vcf.cross=vcf[match(rownames(gt.sub), rownames(gt)), samples=colnames(gt.sub)]
+    #generate sample ID
+    vcf.cross=vcfR::addID(vcf.cross)
+
+    imputed.positions=jitterGmapVector(getGmapPositions(vcf.cross, gmap, uchr))
+
+    #genetic map positions must be in Morgans
+    genMap=data.frame(markerName=paste0(getCHROM(vcf.cross),'_',getPOS(vcf.cross)), chromosome=getCHROM(vcf.cross), position=unlist(imputed.positions)/100)
+
+    teg.GT=t(gt.sub)
+    #recode
+    teg.GT[teg.GT==0]=-1
+    colnames(teg.GT)=paste0(getCHROM(vcf.cross),'_',getPOS(vcf.cross))
+    ped=data.frame(id=rownames(teg.GT), mother=rep(0, nrow(teg.GT)), father=rep(0,nrow(teg.GT)) ) #c(0,0), father=c(0,0))
+    return(importInbredGeno(geno=teg.GT, genMap=genMap, ped=ped))
+}
+
+p.names=c('N2', 'XZ1516')
+founderPop = createFounderPop(vcf,gt, p.names) #c('N2', 'XZ1516'))
 
 
-#specify cross (see crosses.to.parents)
-#cross='A'
-
-#get the two parent names 
-#p1.name=crosses.to.parents[[cross]][1]gg
-#p2.name=crosses.to.parents[[cross]][2]
-
-#extract parental genotypes at variant sites between those parents from a reference vcf
-#vcf.cross=getCrossVCF(ref.vcf,p1.name, p2.name)
-#vcf.cross
-#gmap=gmaps[['A']]
-
-eg.GT=vcfR::extract.gt(vcf.cross)
-#recode
-eg.GT[eg.GT=='0|0']=0
-eg.GT[eg.GT=='1|1']=1
-eg.GT=matrix(as.numeric(eg.GT), nrow(eg.GT), ncol(eg.GT))
-
-uchr=c(as.character(as.roman(1:5)), 'X') #paste0('chr', as.roman(1:16))
 
 
-imputed.positions=jitterGmapVector(getGmapPositions(vcf.cross, gmap, uchr))
 
-#genetic map positions must be in Morgans
-genMap=data.frame(markerName=paste0(getCHROM(vcf.cross),'_',getPOS(vcf.cross)), chromosome=getCHROM(vcf.cross), position=unlist(imputed.positions)/100)
 
-teg.GT=t(eg.GT)
-#recode
-teg.GT[teg.GT==0]=-1
-colnames(teg.GT)=paste0(getCHROM(vcf.cross),'_',getPOS(vcf.cross))
-ped=data.frame(id=c('a', 'b'), mother=c(0,0), father=c(0,0))
-founderPop=importInbredGeno(geno=teg.GT, genMap=genMap)
+#cChr() is how we can eventually deal with X properly 
+
 
 starting.sample.size=10
-
 #if mate or self, estimated brood size 
 brood.size.selfing=20
 brood.size.mating=brood.size.selfing*2
@@ -137,55 +193,49 @@ max.per.gen=2e4
 
 max.gen=12
 
-
 SP=SimParam$new(founderPop)
-pop=newPop(founderPop, simParam=SP)
-crossPlan=matrix(c(1,2),nrow=1, ncol=2)
+FN=newPop(founderPop, simParam=SP)
 
-#F1 ----------------------------------------------------------------------------------------------------------    
 nProgenyF1.mated=starting.sample.size*(1-selfing.rate)*brood.size.mating
 nProgenyF1.selfed=starting.sample.size*(selfing.rate)*brood.size.selfing
-FN=makeCross(pop, crossPlan, nProgeny=nProgenyF1.mated,simParam=SP)
-#t2=pullMarkerGeno(F1, colnames(teg.GT))
-#t2=pullMarkerGeno(F2.selfed, colnames(teg.GT))
-herm.index=sort(sample.int( nInd(FN), size=.5* nInd(FN)))
-male.index=which(!((1: nInd(FN)) %in% herm.index))
 
- if(selfing.rate>0)  {
-        F2.selfed=makeCross(pop, matrix(c(1,1),nrow=1,ncol=2), nProgeny=nProgenyF1.selfed, simParam=SP)
-        herm.index=c(herm.index,nInd(FN)+seq(1,nInd(F2.selfed))) #length(F2.selfed)))
-        FN=c(FN, F2.selfed)
-    }
-#--------------------------------------------------------------------------------------------------------------
+# Setup for F1, deliberate crossings-------------------------------------------------------------
+# mating matrix 
+# herm.index, male/herm index, mating=0/herm=1
+#biparental
+mating.matrix=matrix(c(1,2),nrow=1)
+selfings=c(1)
 
-    mated.herm=sample(herm.index, size=length(male.index))
-    mating.matrix=cbind(male.index,mated.herm,0)
-    mating.matrix=do.call(rbind, replicate(brood.size.mating, mating.matrix, simplify=F))
+#multiparental
+mating.matrix=matrix(rbind(c(1,2),c(3,4), c(5,6), c(7,8),c(9,10), c(11,12)), nrow=6)
+selfings=c(1,3,5,7,9,11)
 
-    unmated.herm=herm.index[!(herm.index %in% mated.herm)]
-    self.cnt= round(length(herm.index)*selfing.rate)
 
-    if(self.cnt>0) {
-       selfings=sample(unmated.herm, self.cnt)
+mating.matrix=cbind(mating.matrix,0)
+mating.matrix=do.call(rbind, replicate(nProgenyF1.mated, mating.matrix, simplify=F))
+
+self.cnt=nProgenyF1.selfed
+if(self.cnt>0) {
        selfing.matrix=cbind(selfings, selfings,1)
-       selfing.matrix=do.call(rbind, replicate(brood.size.selfing, selfing.matrix, simplify=F))
+       selfing.matrix=do.call(rbind, replicate(nProgenyF1.selfed, selfing.matrix, simplify=F))
        mating.matrix=rbind(mating.matrix, selfing.matrix)
-    }
-    if(nrow(mating.matrix)>max.per.gen){
+       mating.matrix=mating.matrix[order(mating.matrix[,3]),]
+}
+if(nrow(mating.matrix)>max.per.gen){
         mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen),]
         mating.matrix=mating.matrix[order(mating.matrix[,3]),]
-    }
-   #----------------------------------------------------------------------------------------------------------
+}
+#-----------------------------------------------------------------------------------------------
 
 
-   current.gen=2
-   while(current.gen<=max.gen) {
+current.gen=1
+while(current.gen<=max.gen) {
        print(current.gen) 
        #at least loop here 
        mated.index=which(mating.matrix[,3]==0)
        selfed.index=which(mating.matrix[,3]==1)
-       print(paste('mated', length(mated.index)))
-       print(paste('selfed', length(selfed.index)))
+       print(paste('progeny from mating', length(mated.index)))
+       print(paste('progeny from selfing', length(selfed.index)))
 
        FN=makeCross(FN, mating.matrix[,-3], nProgeny=1,simParam=SP)
 
@@ -196,8 +246,6 @@ male.index=which(!((1: nInd(FN)) %in% herm.index))
        #t2=pullMarkerGeno(FN3[1], colnames(teg.GT))
        #plot(t2[1,])
 
-       #FN=apply(mating.matrix, 1, function(x) { Meiosis::cross_geno(father=FN[[x[1]]], mother=FN[[x[2]]],  positions = imputed.positions, xoparam=xoparam) })
-       
        #half of the progeny from matings will be hermaphrodites
        herm.index=sort(sample(mated.index,size=length(mated.index)/2))
        #the rest of the mated progeny will be males 
@@ -243,7 +291,7 @@ male.index=which(!((1: nInd(FN)) %in% herm.index))
    }
 
 
-t2=pullMarkerGeno(FN[1:1000], colnames(teg.GT))
+t2=pullMarkerGeno(FN[1:1000],getGenMap(founderPop)$id)
 
 rcnt=colSums(t2)
 plot(rcnt/(nrow(t2)*2))
@@ -256,6 +304,41 @@ plot(rcnt/(nrow(t2)*2))
 
 
 
+
+#F1 ----------------------------------------------------------------------------------------------------------    
+nProgenyF1.mated=starting.sample.size*(1-selfing.rate)*brood.size.mating
+nProgenyF1.selfed=starting.sample.size*(selfing.rate)*brood.size.selfing
+FN=makeCross(pop, crossPlan, nProgeny=nProgenyF1.mated,simParam=SP)
+#t2=pullMarkerGeno(F1, colnames(teg.GT))
+#t2=pullMarkerGeno(F2.selfed, colnames(teg.GT))
+herm.index=sort(sample.int( nInd(FN), size=.5* nInd(FN)))
+male.index=which(!((1: nInd(FN)) %in% herm.index))
+
+ if(selfing.rate>0)  {
+        F2.selfed=makeCross(pop, matrix(c(1,1),nrow=1,ncol=2), nProgeny=nProgenyF1.selfed, simParam=SP)
+        herm.index=c(herm.index,nInd(FN)+seq(1,nInd(F2.selfed))) #length(F2.selfed)))
+        FN=c(FN, F2.selfed)
+    }
+#--------------------------------------------------------------------------------------------------------------
+
+    mated.herm=sample(herm.index, size=length(male.index))
+    mating.matrix=cbind(male.index,mated.herm,0)
+    mating.matrix=do.call(rbind, replicate(brood.size.mating, mating.matrix, simplify=F))
+
+    unmated.herm=herm.index[!(herm.index %in% mated.herm)]
+    self.cnt= round(length(herm.index)*selfing.rate)
+
+    if(self.cnt>0) {
+       selfings=sample(unmated.herm, self.cnt)
+       selfing.matrix=cbind(selfings, selfings,1)
+       selfing.matrix=do.call(rbind, replicate(brood.size.selfing, selfing.matrix, simplify=F))
+       mating.matrix=rbind(mating.matrix, selfing.matrix)
+    }
+    if(nrow(mating.matrix)>max.per.gen){
+        mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen),]
+        mating.matrix=mating.matrix[order(mating.matrix[,3]),]
+    }
+   #----------------------------------------------------------------------------------------------------------
 
 
 
@@ -406,4 +489,81 @@ test=sapply(FN, function(z) { do.call('c', mapply(function(x,y) x+y, z$paternal,
 rcnt=rowSums(test)
 plot(rcnt/(ncol(test)*2))
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+just get biallelic variants for now 
+#get genotypes
+
+p1.name='N2'
+p2.name='XZ1516'
+
+#save as R object
+#extract genos for parents 
+gt.sub=gt[,c(p1.name,p2.name)]
+#find variant sites
+gt.sub=gt.sub[gt.sub[,1]!=gt.sub[,2],]
+#dump sites with missing info for now
+gt.sub=gt.sub[!( is.na(gt.sub[,1]) | is.na(gt.sub[,2])),]
+gt.sub=gt.sub[ !(gt.sub[,1]=='0|1' | gt.sub[,1]=='1|0' | 
+                gt.sub[,2]=='0|1' | gt.sub[,2]=='1|0' ),]
+#remove more complex structural stuff or mitochondrial variants for now
+gt.sub=gt.sub[!grepl('simple|deletion|complex|duplication|chrM|MtDNA', rownames(gt.sub)),]
+#subset vcf ile
+vcf.cross=vcf[match(rownames(gt.sub), rownames(gt)), samples=c(p1.name,p2.name)]
+#generate sample ID
+vcf.cross=vcfR::addID(vcf.cross)
+
+#assuming input vcf with haploid parents and haploid specific variant calls 
+# [1] "273614xa" "BYa"      "CBS2888a" "CLIB219x" "CLIB413a" "I14a"    
+# [7] "M22"      "PW5a"     "RMx"      "Y10x"     "YJM145x"  "YJM454a" 
+#[13] "YJM978x"  "YJM981x"  "YPS1009x" "YPS163a"
+
+#specify sample size
+
+
+#specify cross (see crosses.to.parents)
+#cross='A'
+
+#get the two parent names 
+#p1.name=crosses.to.parents[[cross]][1]gg
+#p2.name=crosses.to.parents[[cross]][2]
+
+#extract parental genotypes at variant sites between those parents from a reference vcf
+#vcf.cross=getCrossVCF(ref.vcf,p1.name, p2.name)
+#vcf.cross
+#gmap=gmaps[['A']]
+
+eg.GT=vcfR::extract.gt(vcf.cross)
+#recode
+eg.GT[eg.GT=='0|0']=0
+eg.GT[eg.GT=='1|1']=1
+eg.GT=matrix(as.numeric(eg.GT), nrow(eg.GT), ncol(eg.GT))
 
