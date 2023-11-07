@@ -1,0 +1,123 @@
+simWormCrosses = function(SimWormParams, sexChr=F) {
+
+    #attach(SimWormParams)
+    starting.sample.size=SimWormParams$starting.sample.size
+    #brood size if it selfs
+    brood.size.selfing=SimWormParams$brood.size.selfing
+    #brood size for mating 
+    brood.size.mating=SimWormParams$brood.size.mating
+    #fraction of hermaphrodites that self
+    selfing.rate=SimWormParams$selfing.rate
+    #bottleneck per generation   
+    max.per.gen=SimWormParams$max.per.gen
+    #how many total generations
+    max.gen=SimWormParams$max.gen
+    #Founder population genotypes
+    FN=SimWormParams$FN
+    #simulation parameters 
+    SP=SimWormParams$SP
+    mating.matrix=SimWormParams$mating.matrix
+    selfings=SimWormParams$selfings
+
+
+    #setup of F0
+    nProgenyF1.mated=starting.sample.size*(1-selfing.rate)*brood.size.mating
+    nProgenyF1.selfed=starting.sample.size*(selfing.rate)*brood.size.selfing
+
+    #third columnm, 0 indicates mating, 1 indicates selfing
+    mating.matrix=cbind(mating.matrix,0)
+    #generate progeny from matings
+    mating.matrix=do.call(rbind, replicate(nProgenyF1.mated, mating.matrix, simplify=F))
+
+    #generate progeny from selfing
+    self.cnt=nProgenyF1.selfed
+    if(self.cnt>0) {
+           selfing.matrix=cbind(selfings, selfings,1)
+           selfing.matrix=do.call(rbind, replicate(nProgenyF1.selfed, selfing.matrix, simplify=F))
+           mating.matrix=rbind(mating.matrix, selfing.matrix)
+           mating.matrix=mating.matrix[order(mating.matrix[,3]),]
+    }
+    # downsample, a fourth column could be added prior to downsampling to propagate through an expected genetic effect,
+    # then a hard threshold or weighted sampling could occur to pick who crosses for the next generation 
+    if(nrow(mating.matrix)>max.per.gen){
+            mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen),]
+            mating.matrix=mating.matrix[order(mating.matrix[,3]),]
+    }
+    #-----------------------------------------------------------------------------------------------
+
+    # current generation 
+    current.gen=1
+    while(current.gen<=max.gen) {
+       
+       mated.index=which(mating.matrix[,3]==0)
+       selfed.index=which(mating.matrix[,3]==1)
+       print(paste('progeny from mating', length(mated.index)))
+       print(paste('progeny from selfing', length(selfed.index)))
+
+       #pilot code to deal with X chromosome goes here -------------
+       if(sexChr==T) {
+           matings=mating.matrix[mated.index,-3]
+           #reduce ploidy for males 
+           rG=reduceGenome(FN, simRecomb=F, simParam=SP)
+           # hack so we can cross 
+           FNmx=doubleGenome(rG)
+           FN=makeCross2(FN,FNmx, matings ,simParam=SP)
+
+           if(length(selfed.index)>0) {
+                selfings=mating.matrix[selfed.index,-3]
+    #        #       #fake X as doubled haploid
+                selfings.cross=makeCross(FN,selfings, nProgeny=1,simParam=SP)
+                FN=c(FN,selfings.cross)
+           }
+       } else {
+            # for normal autosomes 
+            FN=makeCross(FN, mating.matrix[,-3], nProgeny=1,simParam=SP)
+       }
+       
+       #half of the progeny from matings will be hermaphrodites
+       herm.index=sort(sample(mated.index,size=length(mated.index)/2))
+       #the rest of the mated progeny will be males 
+       male.index=which(!((mated.index %in% herm.index)))
+       #all of the selfed progeny will by hermaphrodites
+       if(length(selfed.index)>0) {
+            herm.index=c(herm.index,selfed.index)
+        }
+       print(paste('total herm', length(herm.index)))
+       print(paste('total male', length(male.index)))
+       
+       #for all the males, sample from hermaphrodites for them to mate with
+       mated.herm=sample(herm.index, size=min(length(herm.index), length(male.index)))
+       mating.matrix=cbind(mated.herm,male.index, 0)
+
+       #generate cross progeny for matings, with brood size dependent on expected brood size if mating 
+       mating.matrix=do.call(rbind, replicate(brood.size.mating, mating.matrix, simplify=F))
+      
+       #note which hermaphrodites aren't mated 
+       unmated.herm=herm.index[!(herm.index %in% mated.herm)]
+
+       #how many do we expected to self given the total number of hermaphrodites and the selfing rate 
+       self.cnt= round(length(herm.index)*selfing.rate)
+       #if we expect any selfers then ... 
+       if(self.cnt>0) {
+           #figure out which ones self 
+           selfings=sample(unmated.herm, min(length(unmated.herm),self.cnt))
+           #make a selfing matrix
+           selfing.matrix=cbind(selfings, selfings,1)
+           #make brood size reflect brood size per selfing
+           selfing.matrix=do.call(rbind, replicate(brood.size.selfing, selfing.matrix, simplify=F))
+           mating.matrix=rbind(mating.matrix, selfing.matrix)
+        }
+       #total worms at this point z
+       print(nrow(mating.matrix))
+
+       #bottleneck
+       if(nrow(mating.matrix)>max.per.gen){
+            mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen),]
+            mating.matrix=mating.matrix[order(mating.matrix[,3]),]
+       }
+       current.gen=current.gen+1
+       FN@sex[male.index]='M'
+    }
+    return(FN)
+}
+

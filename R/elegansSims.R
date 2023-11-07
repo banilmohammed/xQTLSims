@@ -85,6 +85,8 @@ elegans.isotypes.vcf.qs='/data0/elegans/xQTLSims/WI.20220216.vcf.qs'
 #filtered numeric gt calls from vcf  as qsave object
 elegans.isotypes.vcf.gt.qs='/data0/elegans/xQTLSims/WI.20220216.vcf.GT.qs'
 
+#this function takes a vcf, filters out biallelic sites, removes heterozygous sites and saves qs objects of the vcf and a numeric matrix of genotypes
+# assuming homozygous diploids, 0 = 0/0 = homozygous ref, 1 = 1/1 = homozygous alt 
 preprocessVCF=function(elegans.isotypes.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs) {
     vcf=vcfR::read.vcfR(elegans.isotypes.vcf)
     vcf=vcf[vcfR::is.biallelic(vcf),]
@@ -111,29 +113,16 @@ preprocessVCF=function(elegans.isotypes.vcf,elegans.isotypes.vcf.qs,elegans.isot
 #run once, Laura skip this 
 preprocessVCF(elegans.isotype.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs)
                            , 
-#Laura load these 
+#Laura start here  
 vcf=qread(elegans.isotypes.vcf.qs)
 gt=qread(elegans.isotypes.vcf.gt.qs)
                       
 
-p.names=c(
-'N2', 
-'ECA191', 
-'QG2832' ,
-'NIC195' ,
-'XZ1516' ,
-'QX1791' ,
-'QX1211',
-'ECA369' ,
-'XZ1514',
-'ECA738' ,
-'ECA760',
-'ECA1255')
 
-#take the larger vcf,  genotype calls, and a subset of parents 
-#extract segregating sites 
-#return an alphaSimR founder population
-createFounderPop=function(vcf, gt, p.names) { 
+# take the larger vcf,  genotype calls, and a subset of parents 
+# extracts segregating sites 
+# return an alphaSimR founder population
+createFounderPop=function(vcf, gt, p.names, X.only=F, X.drop=T) { 
     gt.sub=gt[,colnames(gt) %in% p.names]
 
     #monomorphic=apply(gt.sub, 1, function(x) all.equal(x))
@@ -150,13 +139,18 @@ createFounderPop=function(vcf, gt, p.names) {
     sum(grepl('MtDNA', rownames(gt.sub)))
 
     bad.sites= is.na(rSg) | rSg==0 | rSg==length(p.names)  | grepl('MtDNA', rownames(gt.sub))
-
+    if(X.only) {  bad.sites = bad.sites | !(grepl('X_', rownames(gt.sub))) }
+    if(X.drop) {  bad.sites = bad.sites | (grepl('X_', rownames(gt.sub))) }
     gt.sub=gt.sub[-which(bad.sites),]
     vcf.cross=vcf[match(rownames(gt.sub), rownames(gt)), samples=colnames(gt.sub)]
     #generate sample ID
     vcf.cross=vcfR::addID(vcf.cross)
 
-    imputed.positions=jitterGmapVector(getGmapPositions(vcf.cross, gmap, uchr))
+
+    uchrU=unique(getCHROM(vcf.cross))
+
+    imputed.positions=jitterGmapVector(getGmapPositions(vcf.cross, gmap[uchrU], uchrU)) 
+    
 
     #genetic map positions must be in Morgans
     genMap=data.frame(markerName=paste0(getCHROM(vcf.cross),'_',getPOS(vcf.cross)), chromosome=getCHROM(vcf.cross), position=unlist(imputed.positions)/100)
@@ -169,134 +163,192 @@ createFounderPop=function(vcf, gt, p.names) {
     return(importInbredGeno(geno=teg.GT, genMap=genMap, ped=ped))
 }
 
-p.names=c('N2', 'XZ1516')
-founderPop = createFounderPop(vcf,gt, p.names) #c('N2', 'XZ1516'))
+#existing fog2 ko strains 
+p.names=c('N2', 'ECA191', 'QG2832' ,'NIC195' ,'XZ1516' ,'QX1791' ,'QX1211','ECA369' ,'XZ1514','ECA738' ,'ECA760','ECA1255')
 
-
-
-
-
+p.names=c('N2', 'CB4856') #XZ1516')
+#founderPop = createFounderPop(vcf,gt, p.names, uchr) #c('N2', 'XZ1516'))
+founderPop = createFounderPop(vcf,gt, p.names, X.drop=T) #c('N2', 'XZ1516'))
+sexChr=F
+#founderPop = createFounderPop(vcf,gt, p.names, X.only=T, X.drop=F) #c('N2', 'XZ1516'))
+#sexChr=T
 
 #cChr() is how we can eventually deal with X properly 
 
 
-starting.sample.size=10
-#if mate or self, estimated brood size 
-brood.size.selfing=20
-brood.size.mating=brood.size.selfing*2
 
-#fraction of hermaphrodites that self
-selfing.rate=.2
-#
-
-max.per.gen=2e4
-
-max.gen=12
+source('/data0/elegans/xQTLSims/R/simWormCrosses.R')
 
 SP=SimParam$new(founderPop)
-FN=newPop(founderPop, simParam=SP)
+#SP$addTraitA(nQtlPerChr=1)
 
-nProgenyF1.mated=starting.sample.size*(1-selfing.rate)*brood.size.mating
-nProgenyF1.selfed=starting.sample.size*(selfing.rate)*brood.size.selfing
+FN=newPop(founderPop, simParam=SP)
+genMap=getGenMap(founderPop)
+
+#possible QTL architectures -----------------------------------------
+nmarker=nrow(genMap)
+nQTL=1
+#sample(genMap$id, nQTL)
+nadditive=nQTL
+add.qtl.ind  = genMap$id[sort(sample(nmarker, nadditive))]
+add.qtl.sign = sample(ifelse(runif(nadditive)>.5,1,-1),replace=T)
+#---------------------------------------------------------------------
+
 
 # Setup for F1, deliberate crossings-------------------------------------------------------------
-# mating matrix 
+# what we're calling 'mating.matrix' is really a matrix of who is crossing with who and will have replicated entries given expected broods 
+# female, male, mating=0/selfing=1
 # herm.index, male/herm index, mating=0/herm=1
-#biparental
-mating.matrix=matrix(c(1,2),nrow=1)
-selfings=c(1)
+#biparental, reciprocal
+#mating.matrix=matrix(rbind(c(1,2),c(2,1)),nrow=2)
+#selfings=c(1,2)
+#biparental, non-reciprocal
+#in this case, mate herm N2 with male CB
+mating.matrix=matrix(c(1,2), nrow=1)
+FN@sex[2]='M'
+# in this case, given one-way cross, potentially allow N2 herm to self 
+selfings=1
 
-#multiparental
-mating.matrix=matrix(rbind(c(1,2),c(3,4), c(5,6), c(7,8),c(9,10), c(11,12)), nrow=6)
-selfings=c(1,3,5,7,9,11)
-
-
-mating.matrix=cbind(mating.matrix,0)
-mating.matrix=do.call(rbind, replicate(nProgenyF1.mated, mating.matrix, simplify=F))
-
-self.cnt=nProgenyF1.selfed
-if(self.cnt>0) {
-       selfing.matrix=cbind(selfings, selfings,1)
-       selfing.matrix=do.call(rbind, replicate(nProgenyF1.selfed, selfing.matrix, simplify=F))
-       mating.matrix=rbind(mating.matrix, selfing.matrix)
-       mating.matrix=mating.matrix[order(mating.matrix[,3]),]
-}
-if(nrow(mating.matrix)>max.per.gen){
-        mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen),]
-        mating.matrix=mating.matrix[order(mating.matrix[,3]),]
-}
-#-----------------------------------------------------------------------------------------------
+#multiparental setup
+#mating.matrix=matrix(rbind(c(1,2),c(3,4), c(5,6), c(7,8),c(9,10), c(11,12)), nrow=6)
+#selfings=c(1,3,5,7,9,11)
 
 
-current.gen=1
-while(current.gen<=max.gen) {
-       print(current.gen) 
-       #at least loop here 
-       mated.index=which(mating.matrix[,3]==0)
-       selfed.index=which(mating.matrix[,3]==1)
-       print(paste('progeny from mating', length(mated.index)))
-       print(paste('progeny from selfing', length(selfed.index)))
 
-       FN=makeCross(FN, mating.matrix[,-3], nProgeny=1,simParam=SP)
+SimWormParams=list(
 
-       #sanity check selfing 
-       #FN3=makeCross(FN2[1], matrix(c(1,1), nrow=1), nProgeny=1)
-       #t2=pullMarkerGeno(FN3[1], colnames(teg.GT))
-       #FN3=makeCross(FN3[1], matrix(c(1,1), nrow=1), nProgeny=1)
-       #t2=pullMarkerGeno(FN3[1], colnames(teg.GT))
-       #plot(t2[1,])
+    #how many individual crossed worms per row in mating.matrix
+    starting.sample.size=10,
+    #brood size if it selfs
+    brood.size.selfing=20,
+    #brood size for mating 
+    brood.size.mating=20*2,
+    #fraction of hermaphrodites that self
+    selfing.rate=0.1,
+    #bottleneck per generation   
+    max.per.gen=2e4,
+    #how many total generations
+    max.gen=12,
+    #Founder population genotypes
+    FN=FN,
+    #simulation parameters 
+    SP=SP,
+    mating.matrix=mating.matrix,
+    selfings=selfings
+)
 
-       #half of the progeny from matings will be hermaphrodites
-       herm.index=sort(sample(mated.index,size=length(mated.index)/2))
-       #the rest of the mated progeny will be males 
-       male.index=which(!((mated.index %in% herm.index)))
-       #all of the selfed progeny will by hermaphrodites
-       if(length(selfed.index)>0) {
-            herm.index=c(herm.index,selfed.index)
-        }
-       print(paste('total herm', length(herm.index)))
-       print(paste('total male', length(male.index)))
-       
-       #for all the males, sample from hermaphrodites for them to mate with
-       mated.herm=sample(herm.index, size=min(length(herm.index), length(male.index)))
-       mating.matrix=cbind(male.index,mated.herm,0)
-
-       #generate cross progeny for matings, with brood size dependent on expected brood size if mating 
-       mating.matrix=do.call(rbind, replicate(brood.size.mating, mating.matrix, simplify=F))
-      
-       #note which hermaphrodites aren't mated 
-       unmated.herm=herm.index[!(herm.index %in% mated.herm)]
-
-       #how many do we expected to self given the total number of hermaphrodites and the selfing rate 
-       self.cnt= round(length(herm.index)*selfing.rate)
-       #if we expect any selfers then ... 
-       if(self.cnt>0) {
-           #figure out which ones self 
-           selfings=sample(unmated.herm, min(length(unmated.herm),self.cnt))
-           #make a selfing matrix
-           selfing.matrix=cbind(selfings, selfings,1)
-           #make brood size reflect brood size per selfing
-           selfing.matrix=do.call(rbind, replicate(brood.size.selfing, selfing.matrix, simplify=F))
-           mating.matrix=rbind(mating.matrix, selfing.matrix)
-        }
-       #total worms at this point 
-       print(nrow(mating.matrix))
-
-       #bottleneck
-       if(nrow(mating.matrix)>max.per.gen){
-            mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen),]
-            mating.matrix=mating.matrix[order(mating.matrix[,3]),]
-       }
-       current.gen=current.gen+1
-   }
+FR=simWormCrosses(SimWormParams)
 
 
-t2=pullMarkerGeno(FN[1:1000],getGenMap(founderPop)$id)
 
+
+
+
+geno=pullMarkerGeno(FN[male.index[3000:4000]],simRecomb=F),genMap$id)
+
+
+
+
+
+#run once with X and save as FNX
+#FNX=FN
+#then merge #fix this
+#FN@geno[[6]]=FNX@geno[[1]]
+#FN@nLoci=c(FN@nLoci, FNX@nLoci)
+#FN@nChr=6
+#FNm=cChr(FN, FNX)
+
+#get alt counts per site
+#0/1/2 for hets
+#t2=pullMarkerGeno(FN[herm.index[3000:4000]],getGenMap(founderPop)$id)
+#0/1 for X
+#t3=pullMarkerGeno(reduceGenome(FN[male.index[3000:4000]],simRecomb=F),genMap$id)
+#t2=rbind(t2,t3)
+#rcnt=colSums(t2)
+#plot((rcnt/(2*nrow(t2))))
+#rcnt2=colSums(t3)
+#plot(rcnt2/(nrow(t3)*2))
+#plot((rcnt+rcnt2)/((nrow(t2)*2)+(nrow(t3)*2)))
+
+
+
+
+
+
+
+
+
+
+
+
+
+#SP$addTraitA(nQtlPerChr=1)
+fn2=setPheno(FN, h2=.75, simParam=SP)
+
+t2=pullMarkerGeno(fn2[1:1000],getGenMap(founderPop)$id)
+qm=getQtlMap(trait=1, simParam=SP)
+p=pheno(fn2[1:1000])
+
+summary(lm(p~t2[,qm$id]))
+
+varA(fn2)
+varP(fn2)
 rcnt=colSums(t2)
 plot(rcnt/(nrow(t2)*2))
 
+ abline(v=cumsum(c(0,rle(data.table::tstrsplit(colnames(t2), '_')[[1]])$lengths)))
+
+r=cor(p,t2)
+plot(r[1,]^2)
 
 
+
+   #hermaphrodites
+       FN.herm.index=unique(matings[,1])
+       FN.male.index=unique(matings[,2])
+
+       FN.males=reduceGenome(FN[FN.male.index], simRecomb=F, simParam=SP)
+       t2=pullMarkerGeno(FN.males, getGenMap(founderPopX)$id) #colnames(teg.GT))
+       t3=pullMarkerGeno(FN.males, getGenMap(founderPopX)$id) 
+
+#Pilot code to deal with worm XX XO thing --------------------------------------------
+       
+#no recombination on X for male 
+#recomb for hermX
+#FNhx=reduceGenome(FN,simRecomb=T, simParam=SP)
+#maleX
+
+#rG=reduceGenome(FN,nProgeny=1)
+#t2=pullMarkerGeno(rG,getGenMap(founderPop)$id)
+
+
+#       matings=mating.matrix[mated.index,-3]
+#       rG=reduceGenome(FN, simRecomb=F, simParam=SP)
+#       #capture genotypes here 
+      
+#       FNmx=doubleGenome(rG)
+#       FN=makeCross2(FN,FNmx, matings ,simParam=SP)
+#       print(current.gen) 
+
+#       if(length(selfed.index)>0) {
+#            selfings=mating.matrix[selfed.index,-3]
+#        #       #fake X as doubled haploid
+#            selfings.cross=makeCross(FN,selfings, nProgeny=1,simParam=SP)
+#            FN=c(FN,selfings.cross)
+#       }
+#       
+#       #t2=pullMarkerGeno(FN[1:100], getGenMap(founderPopX)$id) #colnames(teg.GT))
+#       #rcnt=colSums(t2)
+#       #plot(rcnt/(nrow(t2)*2))
+#
+#       #------------------------------------------------------------------
+#mg=pullMarkerGeno(reduceGenome(FN[male.index]),getGenMap(founderPopX)$id)
+#mg=mg*2
+#hg=pullMarkerGeno(FN[herm.index], getGenMap(founderPopX)$id)
+#t2=rbind(hg,mg)
+
+#rcnt=colSums(t2)
+#plot(rcnt/(nrow(t2)*2))
+#abline(v=cumsum(c(0,rle(data.table::tstrsplit(colnames(t2), '_')[[1]])$lengths)))
 
 
