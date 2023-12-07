@@ -1,6 +1,6 @@
 simWormCrosses = function(SimWormParams, sexChr=F) {
 
-    #attach(SimWormParams)
+    #instead of attach()
     starting.sample.size=SimWormParams$starting.sample.size
     #brood size if it selfs
     brood.size.selfing=SimWormParams$brood.size.selfing
@@ -18,7 +18,9 @@ simWormCrosses = function(SimWormParams, sexChr=F) {
     SP=SimWormParams$SP
     mating.matrix=SimWormParams$mating.matrix
     selfings=SimWormParams$selfings
-
+    
+    genMap=SimWormParams$genMap
+    QTL.sims=SimWormParams$QTL.sims
 
     #setup of F0
     nProgenyF1.mated=starting.sample.size*(1-selfing.rate)*brood.size.mating
@@ -54,28 +56,51 @@ simWormCrosses = function(SimWormParams, sexChr=F) {
        print(paste('progeny from mating', length(mated.index)))
        print(paste('progeny from selfing', length(selfed.index)))
 
-       #pilot code to deal with X chromosome goes here -------------
+       #pilot code to deal with X chromosome goes here ----------------
        if(sexChr==T) {
            matings=mating.matrix[mated.index,-3]
            #reduce ploidy for males 
            rG=reduceGenome(FN, simRecomb=F, simParam=SP)
            # hack so we can cross 
-           FNmx=doubleGenome(rG)
-           FN=makeCross2(FN,FNmx, matings ,simParam=SP)
+           rGr=reduceGenome(FN,simRecomb=T, simParam=SP)
+           #FNmx=doubleGenome(rG)
+           #FN=makeCross2(FN,FNmx, matings ,simParam=SP)
+           FNr=mergeGenome(rG, rGr, matings, simParam=SP)
 
            if(length(selfed.index)>0) {
                 selfings=mating.matrix[selfed.index,-3]
     #        #       #fake X as doubled haploid
+                 print(nrow(selfings))
+                 print((FN))
                 selfings.cross=makeCross(FN,selfings, nProgeny=1,simParam=SP)
-                FN=c(FN,selfings.cross)
-           }
-       } else {
+                FN=c(FNr,selfings.cross)
+           } else {
+                FN=FNr
+           } 
+       }
+       #-------------------------------------------------------------
+       if(sexChr==F) {
             # for normal autosomes 
             FN=makeCross(FN, mating.matrix[,-3], nProgeny=1,simParam=SP)
        }
        
-       #half of the progeny from matings will be hermaphrodites
+       ######---calculate phenotype effect for each individual in FN here ----------------------
+        X_Q=pullMarkerGeno(FN, QTL.sims$f.add.qtl.ind, asRaw=F)
+        X_Beta=QTL.sims$f.add.qtl.eff
+        if(length(X_Beta)==1) {
+            XB=X_Q*X_Beta
+        } else {XB=X_Q%*%X_Beta  }
+        simy=XB+rnorm(nrow(X_Q), mean=0, sd=QTL.sims$f.error.sd) 
+        h2=var(XB)/(var(XB)+QTL.sims$f.error.sd^2)
+        print(h2)
+        mprob=pnorm(scale(simy))
+       #----------------------------------------------------------------------------------------
+
+
+       #assume half of the progeny from matings will be hermaphrodites
        herm.index=sort(sample(mated.index,size=length(mated.index)/2))
+
+
        #the rest of the mated progeny will be males 
        male.index=which(!((mated.index %in% herm.index)))
        #all of the selfed progeny will by hermaphrodites
@@ -85,7 +110,13 @@ simWormCrosses = function(SimWormParams, sexChr=F) {
        print(paste('total herm', length(herm.index)))
        print(paste('total male', length(male.index)))
        
+       
        #for all the males, sample from hermaphrodites for them to mate with
+       #probability of mating 
+       #mated.herm=sample(herm.index, size=min(length(herm.index), length(male.index)),prob=mprob[herm.index])
+       #mated.male=sample(male.index, size=min(length(herm.index), length(male.index)),prob=mprob[male.index])
+
+       #mating.matrix=cbind(mated.herm, mated.male, 0)
        mated.herm=sample(herm.index, size=min(length(herm.index), length(male.index)))
        mating.matrix=cbind(mated.herm,male.index, 0)
 
@@ -100,6 +131,7 @@ simWormCrosses = function(SimWormParams, sexChr=F) {
        #if we expect any selfers then ... 
        if(self.cnt>0) {
            #figure out which ones self 
+           #selfings=sample(unmated.herm, min(length(unmated.herm),self.cnt), prob=mprob[unmated.herm])
            selfings=sample(unmated.herm, min(length(unmated.herm),self.cnt))
            #make a selfing matrix
            selfing.matrix=cbind(selfings, selfings,1)
@@ -112,7 +144,10 @@ simWormCrosses = function(SimWormParams, sexChr=F) {
 
        #bottleneck
        if(nrow(mating.matrix)>max.per.gen){
-            mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen),]
+            
+            mprob.lookup=mprob[mating.matrix[,1]]
+            #simulated brood is being downsampled here based on fitness effect of the hermaphrodite parent
+            mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen,prob=mprob.lookup),]
             mating.matrix=mating.matrix[order(mating.matrix[,3]),]
        }
        current.gen=current.gen+1

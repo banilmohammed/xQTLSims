@@ -76,7 +76,8 @@ gmap=restructureGeneticMap(gmap.file)
 #reference vcf (assume ploidy=1)
 #ref.vcf=system.file('reference', 'parents_w_svar_sorted.vcf.gz', package='xQTLStats')
 
-#pretty intensive memory usage here 
+#pretty intensive memory usage here
+#include web link to vcf file 
 elegans.isotypes.vcf='/data0/elegans/xQTLSims/WI.20220216.impute.isotype.vcf.gz'
 
 #filtered vcf as qsave object
@@ -169,7 +170,7 @@ p.names=c('N2', 'ECA191', 'QG2832' ,'NIC195' ,'XZ1516' ,'QX1791' ,'QX1211','ECA3
 p.names=c('N2', 'CB4856') #XZ1516')
 #founderPop = createFounderPop(vcf,gt, p.names, uchr) #c('N2', 'XZ1516'))
 founderPop = createFounderPop(vcf,gt, p.names, X.drop=T) #c('N2', 'XZ1516'))
-sexChr=F
+#sexChr=F
 #founderPop = createFounderPop(vcf,gt, p.names, X.only=T, X.drop=F) #c('N2', 'XZ1516'))
 #sexChr=T
 
@@ -180,8 +181,11 @@ sexChr=F
 source('/data0/elegans/xQTLSims/R/simWormCrosses.R')
 
 SP=SimParam$new(founderPop)
+#these functions to provide sufficient flexibility and are behaving unexpectedly
 #SP$addTraitA(nQtlPerChr=1)
+#SP$setVarE(H2=0.4)
 
+#create founder population 
 FN=newPop(founderPop, simParam=SP)
 genMap=getGenMap(founderPop)
 
@@ -191,9 +195,15 @@ nQTL=1
 #sample(genMap$id, nQTL)
 nadditive=nQTL
 add.qtl.ind  = genMap$id[sort(sample(nmarker, nadditive))]
-add.qtl.sign = sample(ifelse(runif(nadditive)>.5,1,-1),replace=T)
+add.qtl.eff =  sample(ifelse(runif(nadditive)>.5,-1,1),replace=T)
 #---------------------------------------------------------------------
 
+#f designates QTL effects for hermaphrodites 
+QTL.sims=list(
+              f.add.qtl.ind=add.qtl.ind,
+              f.add.qtl.eff=add.qtl.eff,
+              f.error.sd=10
+)
 
 # Setup for F1, deliberate crossings-------------------------------------------------------------
 # what we're calling 'mating.matrix' is really a matrix of who is crossing with who and will have replicated entries given expected broods 
@@ -214,33 +224,75 @@ selfings=1
 #selfings=c(1,3,5,7,9,11)
 
 
-
 SimWormParams=list(
 
     #how many individual crossed worms per row in mating.matrix
-    starting.sample.size=10,
+    starting.sample.size=10 ,
     #brood size if it selfs
-    brood.size.selfing=20,
+    brood.size.selfing=20 ,
     #brood size for mating 
-    brood.size.mating=20*2,
+    brood.size.mating=20*2 ,
     #fraction of hermaphrodites that self
-    selfing.rate=0.1,
+    selfing.rate=0.1 ,
     #bottleneck per generation   
-    max.per.gen=2e4,
+    max.per.gen=1e4,
     #how many total generations
-    max.gen=12,
+    max.gen=5,
     #Founder population genotypes
-    FN=FN,
+    FN=FN ,
     #simulation parameters 
-    SP=SP,
-    mating.matrix=mating.matrix,
-    selfings=selfings
+    SP=SP ,
+    mating.matrix=mating.matrix ,
+    selfings=selfings,
+    genMap=genMap,
+    QTL.sims=QTL.sims
 )
 
 FR=simWormCrosses(SimWormParams)
 
+#get full set of marker genotypes 
+G=pullMarkerGeno(FR,genMap$id,asRaw=F)
+plot(colSums(G)/(nrow(G)*2))
+
+X_Q=pullMarkerGeno(FR, QTL.sims$add.qtl.ind, asRaw=F)
+
+X_Beta=QTL.sims$add.qtl.eff
+if(length(X_Beta)==1) {
+    XB=X_Q*X_Beta
+} else {XB=X_Q%*%X_Beta 
+}
+
+error.sd=1
+h2norm=F
+h2=.5
+#two ways to 
+if(h2norm==F) {
+    simy=X_Beta+rnorm(nrow(G), mean=0, sd=error.sd) 
+    h2=var(XB)/(var(XB)+error.sd^2)
+} else {
+    simy= sqrt(h2)*scale(XB) + rnorm(nrow(G), mean=0, sd=sqrt((1-h2)/(h2*var(sqrt(h2)*scale(XB)))))
+}
 
 
+
+
+plot(colSums(G)/(nrow(G)*2))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+extractGenoMatrix(
 
 
 
@@ -260,12 +312,22 @@ geno=pullMarkerGeno(FN[male.index[3000:4000]],simRecomb=F),genMap$id)
 
 #get alt counts per site
 #0/1/2 for hets
-#t2=pullMarkerGeno(FN[herm.index[3000:4000]],getGenMap(founderPop)$id)
+
+#get just hets
+hi=FR@sex=='H'
+
+
+t2=pullMarkerGeno(FR[which(hi)[1:1000]],getGenMap(founderPop)$id)
+rcnt=colSums(t2)
+plot((rcnt/(2*nrow(t2))))
+
+qm=getQtlMap(trait=1, simParam=SP)
+p=pheno(FR[1:1000])
+summary(lm(p~t2[,qm$id]))
+
 #0/1 for X
 #t3=pullMarkerGeno(reduceGenome(FN[male.index[3000:4000]],simRecomb=F),genMap$id)
 #t2=rbind(t2,t3)
-#rcnt=colSums(t2)
-#plot((rcnt/(2*nrow(t2))))
 #rcnt2=colSums(t3)
 #plot(rcnt2/(nrow(t3)*2))
 #plot((rcnt+rcnt2)/((nrow(t2)*2)+(nrow(t3)*2)))
@@ -286,10 +348,6 @@ geno=pullMarkerGeno(FN[male.index[3000:4000]],simRecomb=F),genMap$id)
 fn2=setPheno(FN, h2=.75, simParam=SP)
 
 t2=pullMarkerGeno(fn2[1:1000],getGenMap(founderPop)$id)
-qm=getQtlMap(trait=1, simParam=SP)
-p=pheno(fn2[1:1000])
-
-summary(lm(p~t2[,qm$id]))
 
 varA(fn2)
 varP(fn2)
