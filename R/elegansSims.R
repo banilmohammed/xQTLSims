@@ -167,7 +167,7 @@ createFounderPop=function(vcf, gt, p.names, X.only=F, X.drop=T) {
 #existing fog2 ko strains 
 p.names=c('N2', 'ECA191', 'QG2832' ,'NIC195' ,'XZ1516' ,'QX1791' ,'QX1211','ECA369' ,'XZ1514','ECA738' ,'ECA760','ECA1255')
 
-p.names=c('N2', 'CB4856') #XZ1516')
+p.names=c('ECA191', 'CB4856') #XZ1516')
 #founderPop = createFounderPop(vcf,gt, p.names, uchr) #c('N2', 'XZ1516'))
 founderPop = createFounderPop(vcf,gt, p.names, X.drop=T) #c('N2', 'XZ1516'))
 #sexChr=F
@@ -181,7 +181,8 @@ founderPop = createFounderPop(vcf,gt, p.names, X.drop=T) #c('N2', 'XZ1516'))
 source('/data0/elegans/xQTLSims/R/simWormCrosses.R')
 
 SP=SimParam$new(founderPop)
-#these functions to provide sufficient flexibility and are behaving unexpectedly
+#unfortunately these functions fail to provide sufficient flexibility wrt trait architectures
+#and are behaving unexpectedly
 #SP$addTraitA(nQtlPerChr=1)
 #SP$setVarE(H2=0.4)
 
@@ -189,21 +190,32 @@ SP=SimParam$new(founderPop)
 FN=newPop(founderPop, simParam=SP)
 genMap=getGenMap(founderPop)
 
-#possible QTL architectures -----------------------------------------
+#possible QTL architectures for fitness effects ---------------------
 nmarker=nrow(genMap)
-nQTL=1
+#for example a TA element
+f.nQTL=1
 #sample(genMap$id, nQTL)
-nadditive=nQTL
-add.qtl.ind  = genMap$id[sort(sample(nmarker, nadditive))]
-add.qtl.eff =  sample(ifelse(runif(nadditive)>.5,-1,1),replace=T)
+f.nadditive=nQTL
+f.add.qtl.ind  = genMap$id[sort(sample(nmarker, f.nadditive))]
+f.add.qtl.eff =  sample(ifelse(runif(f.nadditive)>.5,-1,1),replace=T)
 #---------------------------------------------------------------------
 
+#possible QTL architectures for traits orthogonal to fitness 
+o.nQTL=5
+o.nadditive=o.nQTL
+o.add.qtl.ind  = genMap$id[sort(sample(nmarker, o.nadditive))]
+o.add.qtl.eff =  sample(ifelse(runif(o.nadditive)>.5,-1,1),replace=T)
+
+
 #f designates QTL effects for hermaphrodites 
-QTL.sims=list(
-              f.add.qtl.ind=add.qtl.ind,
-              f.add.qtl.eff=add.qtl.eff,
-              f.error.sd=10
-)
+QTL.sims=list(sim.fitness=F,
+              f.add.qtl.ind=f.add.qtl.ind,
+              f.add.qtl.eff=f.add.qtl.eff,
+              f.error.sd=10,
+              sim.orthogonal=T,
+              o.add.qtl.ind=o.add.qtl.ind,
+              o.add.qtl.eff=o.add.qtl.eff,
+              o.error.sd=1)
 
 # Setup for F1, deliberate crossings-------------------------------------------------------------
 # what we're calling 'mating.matrix' is really a matrix of who is crossing with who and will have replicated entries given expected broods 
@@ -251,38 +263,141 @@ SimWormParams=list(
 FR=simWormCrosses(SimWormParams)
 
 #get full set of marker genotypes 
-G=pullMarkerGeno(FR,genMap$id,asRaw=F)
+
+
+
+#=============simulate phenotypes given a genetic architecture on final population after crossings====================
+ds=sample.int(nInd(FR),1e3)
+
+G=pullMarkerGeno(FR[ds],genMap$id,asRaw=F)
 plot(colSums(G)/(nrow(G)*2))
 
-X_Q=pullMarkerGeno(FR, QTL.sims$add.qtl.ind, asRaw=F)
+X_Q=pullMarkerGeno(FR[ds], QTL.sims$o.add.qtl.ind, asRaw=F)
 
-X_Beta=QTL.sims$add.qtl.eff
+X_Beta=QTL.sims$o.add.qtl.eff
 if(length(X_Beta)==1) {
     XB=X_Q*X_Beta
 } else {XB=X_Q%*%X_Beta 
 }
 
-error.sd=1
 h2norm=F
 h2=.5
 #two ways to 
 if(h2norm==F) {
-    simy=X_Beta+rnorm(nrow(G), mean=0, sd=error.sd) 
+    simy=XB+rnorm(nrow(G), mean=0, sd=QTL.sims$o.error.sd) 
     h2=var(XB)/(var(XB)+error.sd^2)
 } else {
     simy= sqrt(h2)*scale(XB) + rnorm(nrow(G), mean=0, sd=sqrt((1-h2)/(h2*var(sqrt(h2)*scale(XB)))))
 }
 
+#when functionalizing, return simy 
+
+#sanity check 
+ summary(lm(simy~X_Q))
+
+rG=cor(simy, scale(G))
+
+plot(rG[1,])
+abline(v=match(QTL.sims$o.add.qtl.ind, colnames(G)))
+#plot(colSums(G)/(nrow(G)*2))
+#======================================================================================================================
 
 
 
-plot(colSums(G)/(nrow(G)*2))
 
 
+#===========generate ref and alt counts given a simulated phenotype, a genotype matrix, a selection strength, 
+# sequencing depth, and whether we are selectign lower tail or upper tail =============================================
+simSequencingRefAlt=function(y, G, depth, sel.frac, lower.tail=F) {
+    y=simy
+    lower.tail=F
+    depth=50
+
+    #fraction of alt alleles across pop
+    alt.af=colSums(G)/(nrow(G)*2)
+    #fraction of ref alleles across pop
+    ref.af=1-alt.af
+
+    #sel.frac=.1
+    if(sel.frac==1) {
+      sel.indv.af=alt.af
+    } else{
+        if(lower.tail==F) {
+            sel.indv=which(y>quantile(y,1-sel.frac))
+        }
+        else{
+            sel.indv=which(y< quantile(y,sel.frac))
+        }
+       sel.indv.x=G[sel.indv,]
+       sel.indv.af=colSums(sel.indv.x)/(nrow(sel.indv.x)*2)
+    }
+
+    #freq of alt
+    a=rbinom(n=length(sel.indv.af),size=depth, prob=sel.indv.af)
+    #freq of ref
+    r=rbinom(n=length(sel.indv.af),size=depth, prob=1-sel.indv.af)
+    countdf=data.frame(ID=colnames(G), expected=1-sel.indv.af, ref=r, alt=a)
+    return(countdf)
+}
+#========================================================================================================================
+
+countdf.h=simSequencingRefAlt(simy,G,depth=50, sel.frac=.1, lower.tail=F)
+countdf.l=simSequencingRefAlt(simy,G,depth=50, sel.frac=1 , lower.tail=F)
+
+plot(countdf.h$alt/(countdf.h$alt+countdf.h$ref))
+points(countdf.h$expected, col='red') #alt/(countdf$alt+countdf$ref))
+
+plot(countdf.l$alt/(countdf.l$alt+countdf.l$ref))
+points(countdf.l$expected, col='red') 
 
 
+## ============ Phase reference and alt counts given the ref/alt calls for one of the parents ===========================
+phaseBiparental=function(df,p1.name, founderPop,  genMap) {
+  #  df=countdf
+    #phaseCounts (for biparental case) 
+    founderGenos=pullMarkerGeno(founderPop,genMap$id) 
+
+    p1.ref=founderGenos[p1.name,]==0
+    vname=names(p1.ref)
+    
+    p1=c(df$ref[p1.ref], df$alt[!p1.ref])
+    vscramb=c(vname[p1.ref], vname[!p1.ref])
+    names(p1)=vscramb
+    p1=p1[vname]
+
+    p2=c(df$ref[!p1.ref], df$alt[p1.ref])
+    vscramb=c(vname[!p1.ref], vname[p1.ref])
+    names(p2)=vscramb
+    p2=p2[vname]
+    if(!is.null(df$expected)) {
+        expected.phased=ifelse(p1.ref, df$expected, 1-df$expected)
+        df$expected.phased=expected.phased
+    }
+    df$p1=p1
+    df$p2=p2
+    return(df)
+}
+##==================================================================================================================
+
+countdf.h=phaseBiparental(countdf.h, p.names[1], founderPop, genMap)
+countdf.l=phaseBiparental(countdf.l, p.names[1], founderPop, genMap)
+
+#plot(df$p1/(df$p1+df$p2))
+#points(df$expected.phased, col='red') #alt/(countdf$alt+countdf$ref))
+
+#QTL.sims$o.add.qtl.ind, asRaw=F)
 
 
+test  = calcAFD(countdf.h, experiment.name='high1',sample.size=1e4, sel.strength=.1, bin.width=1000, eff.length=300, uchr=as.roman(1:5))
+test2 = calcAFD(countdf.l, experiment.name='unsel1',sample.size=1e4, sel.strength=.1, bin.width=1000, eff.length=300, uchr=as.roman(1:5))
+results=calcContrastStats(results=list(test, test2), L='_high1', R='_unsel1')
+
+# test$expected.phased_high1=1-test$expected.phased_high1
+
+h1=plotIndividualExperiment(test, 'high1')
+u1=plotIndividualExperiment(test2, 'unsel1')
+c1=plotContrast(results, 'high1', 'unsel1')
+ggpubr::ggarrange(h1, u1, c1, nrow=3) 
 
 
 

@@ -85,15 +85,18 @@ simWormCrosses = function(SimWormParams, sexChr=F) {
        }
        
        ######---calculate phenotype effect for each individual in FN here ----------------------
-        X_Q=pullMarkerGeno(FN, QTL.sims$f.add.qtl.ind, asRaw=F)
-        X_Beta=QTL.sims$f.add.qtl.eff
-        if(length(X_Beta)==1) {
-            XB=X_Q*X_Beta
-        } else {XB=X_Q%*%X_Beta  }
-        simy=XB+rnorm(nrow(X_Q), mean=0, sd=QTL.sims$f.error.sd) 
-        h2=var(XB)/(var(XB)+QTL.sims$f.error.sd^2)
-        print(h2)
-        mprob=pnorm(scale(simy))
+        if( !is.null(QTL.sims$sim.fitness) & QTL.sims$sim.fitness) {
+            X_Q=pullMarkerGeno(FN, QTL.sims$f.add.qtl.ind, asRaw=F)
+            X_Beta=QTL.sims$f.add.qtl.eff
+            if(length(X_Beta)==1) {
+                XB=X_Q*X_Beta
+            } else {XB=X_Q%*%X_Beta  }
+            simy=XB+rnorm(nrow(X_Q), mean=0, sd=QTL.sims$f.error.sd) 
+            h2=var(XB)/(var(XB)+QTL.sims$f.error.sd^2)
+            print(h2)
+            mprob=pnorm(scale(simy))
+        }
+       else{ mprob=rep(1,nInd(FN))  }#; print(mprob)      }
        #----------------------------------------------------------------------------------------
 
 
@@ -147,7 +150,7 @@ simWormCrosses = function(SimWormParams, sexChr=F) {
             
             mprob.lookup=mprob[mating.matrix[,1]]
             #simulated brood is being downsampled here based on fitness effect of the hermaphrodite parent
-            mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen,prob=mprob.lookup),]
+            mating.matrix=mating.matrix[sample(1:nrow(mating.matrix), max.per.gen, prob=mprob.lookup),]
             mating.matrix=mating.matrix[order(mating.matrix[,3]),]
        }
        current.gen=current.gen+1
