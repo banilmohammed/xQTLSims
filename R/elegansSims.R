@@ -1,72 +1,26 @@
-#some more complex simulations here 
 library(xQTLStats)
 library(vcfR)
 library(qs)
 #switch to AlphaSimR for simulation backend 
-library(AlphaSimR)
 #library(Meiosis)
+library(AlphaSimR)
+library(Rfast)
+
+
+source.dir='/data0/elegans/xQTLSims/R/'
+data.dir='/data0/elegans/xQTLSims/'
+
+#function to simulate crosses, treatement of X is incomplete/broken
+source(paste0(source.dir, 'simWormCrosses.R'))
+#additional helper functions 
+source(paste0(source.dir, 'helperFxs.R'))
 
 #unique chromosomes 
 uchr=c(as.character(as.roman(1:5)), 'X') #paste0('chr', as.roman(1:16))
 
-
-#add jitter to a genetic map 
-jitterGmapVector=function(themap, amount=1e-6) {
-    for (i in 1:length(themap)) {
-         n <- length(themap[[i]])
-         themap[[i]] <- themap[[i]] + c(0, cumsum(rep(amount, n - 1)))
-    }
-    return(themap)
-}
-
-#convert physical position to genetic map position 
-getGmapPositions=function(vcf.cross, gmap, uchr) {
-    #get physical position, split by chromosome
-    p.by.chr=split(vcfR::getPOS(vcf.cross),vcfR::getCHROM(vcf.cross))
-    #keep things sorted (yay yeast chr names with roman numerals)
-    p.by.chr=p.by.chr[uchr]
-
-   #where to put the variant sites, impute onto gmap
-    imputed.positions=mapply( 
-           function(x, y){
-                approxfun(y$ppos, y$map, rule=2)(x)
-            },
-            x=p.by.chr, y=gmap,
-            SIMPLIFY=F)
-
-}
-
-#input is rds object of Rockman N2 x Hawaii F10 AIL rils genetic map
-#output is genetic map for F2 progeny
-#note units here are centimorgans
-restructureGeneticMap=function(gmap.rds, expansion.factor=1/5, expandX=T){
-    #genetic map from F10 AIL 
-    gmapRef=readRDS(gmap.rds) #'/data0/elegans/xQTLSims/geneticMapXQTLsnplist.rds')
-    #normalize map to what's expected from F2
-    #https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1000419
-    gmapRef$map=gmapRef$map*expansion.factor#5.3
-    #reorder
-    gmapRef=gmapRef[,c('map', 'chrom', 'pos')]
-    #rename columns (ppos = physical pos)
-    names(gmapRef)[3]='ppos'
-    gmapRef[,'chrom']=as.character(gmapRef[,'chrom'])
-    gmapRef=split(gmapRef, gmapRef$chrom)
-
-    gmap=gmapRef
-    #sapply(gmap, function(x) max(x$map))
-    #force obligate chiasma on X
-    if(expandX) {
-    gmap$X$map=gmap$X$map*(51/max(gmap$X$map)) 
-    }
-
-    return(gmap)
-}
-
-gmap.file='/data0/elegans/xQTLSims/geneticMapXQTLsnplist.rds'
-
+gmap.file=paste0(data.dir, 'geneticMapXQTLsnplist.rds')
 
 gmap=restructureGeneticMap(gmap.file)
-
 
 #sapply(gmap, function(x) max(x$map))
 #data(crosses.to.parents)
@@ -78,98 +32,30 @@ gmap=restructureGeneticMap(gmap.file)
 
 #pretty intensive memory usage here
 #include web link to vcf file 
-elegans.isotypes.vcf='/data0/elegans/xQTLSims/WI.20220216.impute.isotype.vcf.gz'
+elegans.isotypes.vcf=paste0(data.dir,'WI.20220216.impute.isotype.vcf.gz')
 
 #filtered vcf as qsave object
-elegans.isotypes.vcf.qs='/data0/elegans/xQTLSims/WI.20220216.vcf.qs'
+elegans.isotypes.vcf.qs=paste0(data.dir,'WI.20220216.vcf.qs')
 
 #filtered numeric gt calls from vcf  as qsave object
-elegans.isotypes.vcf.gt.qs='/data0/elegans/xQTLSims/WI.20220216.vcf.GT.qs'
+elegans.isotypes.vcf.gt.qs=paste0(data.dir,'WI.20220216.vcf.GT.qs')
 
-#this function takes a vcf, filters out biallelic sites, removes heterozygous sites and saves qs objects of the vcf and a numeric matrix of genotypes
-# assuming homozygous diploids, 0 = 0/0 = homozygous ref, 1 = 1/1 = homozygous alt 
-preprocessVCF=function(elegans.isotypes.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs) {
-    vcf=vcfR::read.vcfR(elegans.isotypes.vcf)
-    vcf=vcf[vcfR::is.biallelic(vcf),]
 
-    gt=vcfR::extract.gt(vcf, as.numeric=T)
-    #recode hets as NA
-    gt[gt=='0|1']=NA
-    gt[gt=='1|0']=NA
-    gt[gt=='0|0']=0
-    gt[gt=='1|1']=1
-    #this conversion should force anything that isn't homozygous to NA
-    gt2=matrix(as.numeric(gt),ncol=ncol(gt))
-    rownames(gt2)=rownames(gt)
-    colnames(gt2)=colnames(gt)
-    gt=gt2
-    rm(gt2)
-    
-    qsave(vcf, file=elegans.isotypes.vcf.qs)
-    qsave(gt, file=elegans.isotypes.vcf.gt.qs)
-    
-    return(NULL) #list(vcf=vcf, gt=gt))
-}
-
-#run once, Laura skip this 
+#run once, Laura skip this ============================================================
 preprocessVCF(elegans.isotype.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs)
-                           , 
-#Laura start here  
+#======================================================================================
+
+, 
+#Laura start here ======================================================================
 vcf=qread(elegans.isotypes.vcf.qs)
 gt=qread(elegans.isotypes.vcf.gt.qs)
                       
-
-
-# take the larger vcf,  genotype calls, and a subset of parents 
-# extracts segregating sites 
-# return an alphaSimR founder population
-createFounderPop=function(vcf, gt, p.names, X.only=F, X.drop=T) { 
-    gt.sub=gt[,colnames(gt) %in% p.names]
-
-    #monomorphic=apply(gt.sub, 1, function(x) all.equal(x))
-    #monomorphic sites 
-    #faster to do this with math
-    rSg=rowSums(gt.sub)
-    #sites with hets 
-    sum(is.na(rSg))
-    #sites all ref
-    sum(rSg==0, na.rm=T)
-    #sites all alt
-    sum(rSg==length(p.names), na.rm=T)
-    #sites mito
-    sum(grepl('MtDNA', rownames(gt.sub)))
-
-    bad.sites= is.na(rSg) | rSg==0 | rSg==length(p.names)  | grepl('MtDNA', rownames(gt.sub))
-    if(X.only) {  bad.sites = bad.sites | !(grepl('X_', rownames(gt.sub))) }
-    if(X.drop) {  bad.sites = bad.sites | (grepl('X_', rownames(gt.sub))) }
-    gt.sub=gt.sub[-which(bad.sites),]
-    vcf.cross=vcf[match(rownames(gt.sub), rownames(gt)), samples=colnames(gt.sub)]
-    #generate sample ID
-    vcf.cross=vcfR::addID(vcf.cross)
-
-
-    uchrU=unique(getCHROM(vcf.cross))
-
-    imputed.positions=jitterGmapVector(getGmapPositions(vcf.cross, gmap[uchrU], uchrU)) 
-    
-
-    #genetic map positions must be in Morgans
-    genMap=data.frame(markerName=paste0(getCHROM(vcf.cross),'_',getPOS(vcf.cross)), chromosome=getCHROM(vcf.cross), position=unlist(imputed.positions)/100)
-
-    teg.GT=t(gt.sub)
-    #recode
-    teg.GT[teg.GT==0]=-1
-    colnames(teg.GT)=paste0(getCHROM(vcf.cross),'_',getPOS(vcf.cross))
-    ped=data.frame(id=rownames(teg.GT), mother=rep(0, nrow(teg.GT)), father=rep(0,nrow(teg.GT)) ) #c(0,0), father=c(0,0))
-    return(importInbredGeno(geno=teg.GT, genMap=genMap, ped=ped))
-}
-
 #existing fog2 ko strains 
 p.names=c('N2', 'ECA191', 'QG2832' ,'NIC195' ,'XZ1516' ,'QX1791' ,'QX1211','ECA369' ,'XZ1514','ECA738' ,'ECA760','ECA1255')
 
 p.names=c('ECA191', 'CB4856') #XZ1516')
 #founderPop = createFounderPop(vcf,gt, p.names, uchr) #c('N2', 'XZ1516'))
-founderPop = createFounderPop(vcf,gt, p.names, X.drop=T) #c('N2', 'XZ1516'))
+founderPop = createFounderPop(vcf,gt, p.names, gmap, X.drop=T) #c('N2', 'XZ1516'))
 #sexChr=F
 #founderPop = createFounderPop(vcf,gt, p.names, X.only=T, X.drop=F) #c('N2', 'XZ1516'))
 #sexChr=T
@@ -177,8 +63,6 @@ founderPop = createFounderPop(vcf,gt, p.names, X.drop=T) #c('N2', 'XZ1516'))
 #cChr() is how we can eventually deal with X properly 
 
 
-
-source('/data0/elegans/xQTLSims/R/simWormCrosses.R')
 
 SP=SimParam$new(founderPop)
 #unfortunately these functions fail to provide sufficient flexibility wrt trait architectures
@@ -195,7 +79,7 @@ nmarker=nrow(genMap)
 #for example a TA element
 f.nQTL=1
 #sample(genMap$id, nQTL)
-f.nadditive=nQTL
+f.nadditive=f.nQTL
 f.add.qtl.ind  = genMap$id[sort(sample(nmarker, f.nadditive))]
 f.add.qtl.eff =  sample(ifelse(runif(f.nadditive)>.5,-1,1),replace=T)
 #---------------------------------------------------------------------
@@ -208,14 +92,27 @@ o.add.qtl.eff =  sample(ifelse(runif(o.nadditive)>.5,-1,1),replace=T)
 
 
 #f designates QTL effects for hermaphrodites 
-QTL.sims=list(sim.fitness=F,
+QTL.sims=list(#simulate fitness effects during panel construction ------------------------
+              sim.fitness=F,
+              #positions of fitness effect QTL
               f.add.qtl.ind=f.add.qtl.ind,
+              #fitness QTL effect magnitudes
               f.add.qtl.eff=f.add.qtl.eff,
+              #residual error sd of fitness effect
               f.error.sd=10,
+              #---------------------------------------------------------------------------
+              #simulate additional trait effects that don't manifest as fitness effects
               sim.orthogonal=T,
+              # positions of trait effect QTL
               o.add.qtl.ind=o.add.qtl.ind,
+              # trait effect QTL effect magnitudes
               o.add.qtl.eff=o.add.qtl.eff,
-              o.error.sd=1)
+              # residual error sd of trait effect 
+              o.error.sd=1,
+              # toggle to ignore residual error sd of trait effect and instead normalize
+              # trait variance such that residual error is 1-h^2
+              o.h2.norm=F,
+              o.h2=.5)
 
 # Setup for F1, deliberate crossings-------------------------------------------------------------
 # what we're calling 'mating.matrix' is really a matrix of who is crossing with who and will have replicated entries given expected broods 
@@ -249,7 +146,7 @@ SimWormParams=list(
     #bottleneck per generation   
     max.per.gen=1e4,
     #how many total generations
-    max.gen=5,
+    max.gen=12,
     #Founder population genotypes
     FN=FN ,
     #simulation parameters 
@@ -266,34 +163,10 @@ FR=simWormCrosses(SimWormParams)
 
 
 
-#=============simulate phenotypes given a genetic architecture on final population after crossings====================
-ds=sample.int(nInd(FR),1e3)
-
-G=pullMarkerGeno(FR[ds],genMap$id,asRaw=F)
-plot(colSums(G)/(nrow(G)*2))
-
-X_Q=pullMarkerGeno(FR[ds], QTL.sims$o.add.qtl.ind, asRaw=F)
-
-X_Beta=QTL.sims$o.add.qtl.eff
-if(length(X_Beta)==1) {
-    XB=X_Q*X_Beta
-} else {XB=X_Q%*%X_Beta 
-}
-
-h2norm=F
-h2=.5
-#two ways to 
-if(h2norm==F) {
-    simy=XB+rnorm(nrow(G), mean=0, sd=QTL.sims$o.error.sd) 
-    h2=var(XB)/(var(XB)+error.sd^2)
-} else {
-    simy= sqrt(h2)*scale(XB) + rnorm(nrow(G), mean=0, sd=sqrt((1-h2)/(h2*var(sqrt(h2)*scale(XB)))))
-}
-
 #when functionalizing, return simy 
 
 #sanity check 
- summary(lm(simy~X_Q))
+summary(lm(simy~X_Q))
 
 rG=cor(simy, scale(G))
 
@@ -305,42 +178,6 @@ abline(v=match(QTL.sims$o.add.qtl.ind, colnames(G)))
 
 
 
-
-#===========generate ref and alt counts given a simulated phenotype, a genotype matrix, a selection strength, 
-# sequencing depth, and whether we are selectign lower tail or upper tail =============================================
-simSequencingRefAlt=function(y, G, depth, sel.frac, lower.tail=F) {
-    y=simy
-    lower.tail=F
-    depth=50
-
-    #fraction of alt alleles across pop
-    alt.af=colSums(G)/(nrow(G)*2)
-    #fraction of ref alleles across pop
-    ref.af=1-alt.af
-
-    #sel.frac=.1
-    if(sel.frac==1) {
-      sel.indv.af=alt.af
-    } else{
-        if(lower.tail==F) {
-            sel.indv=which(y>quantile(y,1-sel.frac))
-        }
-        else{
-            sel.indv=which(y< quantile(y,sel.frac))
-        }
-       sel.indv.x=G[sel.indv,]
-       sel.indv.af=colSums(sel.indv.x)/(nrow(sel.indv.x)*2)
-    }
-
-    #freq of alt
-    a=rbinom(n=length(sel.indv.af),size=depth, prob=sel.indv.af)
-    #freq of ref
-    r=rbinom(n=length(sel.indv.af),size=depth, prob=1-sel.indv.af)
-    countdf=data.frame(ID=colnames(G), expected=1-sel.indv.af, ref=r, alt=a)
-    return(countdf)
-}
-#========================================================================================================================
-
 countdf.h=simSequencingRefAlt(simy,G,depth=50, sel.frac=.1, lower.tail=F)
 countdf.l=simSequencingRefAlt(simy,G,depth=50, sel.frac=1 , lower.tail=F)
 
@@ -350,34 +187,6 @@ points(countdf.h$expected, col='red') #alt/(countdf$alt+countdf$ref))
 plot(countdf.l$alt/(countdf.l$alt+countdf.l$ref))
 points(countdf.l$expected, col='red') 
 
-
-## ============ Phase reference and alt counts given the ref/alt calls for one of the parents ===========================
-phaseBiparental=function(df,p1.name, founderPop,  genMap) {
-  #  df=countdf
-    #phaseCounts (for biparental case) 
-    founderGenos=pullMarkerGeno(founderPop,genMap$id) 
-
-    p1.ref=founderGenos[p1.name,]==0
-    vname=names(p1.ref)
-    
-    p1=c(df$ref[p1.ref], df$alt[!p1.ref])
-    vscramb=c(vname[p1.ref], vname[!p1.ref])
-    names(p1)=vscramb
-    p1=p1[vname]
-
-    p2=c(df$ref[!p1.ref], df$alt[p1.ref])
-    vscramb=c(vname[!p1.ref], vname[p1.ref])
-    names(p2)=vscramb
-    p2=p2[vname]
-    if(!is.null(df$expected)) {
-        expected.phased=ifelse(p1.ref, df$expected, 1-df$expected)
-        df$expected.phased=expected.phased
-    }
-    df$p1=p1
-    df$p2=p2
-    return(df)
-}
-##==================================================================================================================
 
 countdf.h=phaseBiparental(countdf.h, p.names[1], founderPop, genMap)
 countdf.l=phaseBiparental(countdf.l, p.names[1], founderPop, genMap)
@@ -401,17 +210,36 @@ ggpubr::ggarrange(h1, u1, c1, nrow=3)
 
 
 
+QS=simPheno(FR,genMap$id,QTL.sims, ds.size=2e3)
+
+
+#standardize genotypes 
+sG=Rfast::standardise(QS$G)
+#map QTL 
+qtl.detected=doTraitFDR(scale(QS$simy), sG, QS$G, nperm=1e2)
 
 
 
 
 
 
-extractGenoMatrix(
 
 
 
-geno=pullMarkerGeno(FN[male.index[3000:4000]],simRecomb=F),genMap$id)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
