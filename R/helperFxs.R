@@ -323,9 +323,18 @@ simPheno=function(FR, genMapMarkers, QTL.sims,ds.size=NULL,returnG=T) {
       ds=sample.int(nInd(FR),ds.size)
   }
 
+    #G=pullSegSiteGeno(FR[ds])
+    
     G=pullMarkerGeno(FR[ds],genMapMarkers,asRaw=F)
-    plot(colSums(G)/(nrow(G)*2))
+    af=(colSums(G)/(nrow(G)*2))
+    plot(af, ylab='ref/(ref+alt)', xlab='marker.index')
 
+    #fixed alt or fixed ref sites 
+    f.ref=af==0
+    f.alt=af==1
+    G=G[,!(f.ref|f.alt)]
+
+    #also possible that sites that aren't segregating are assigned QTL ??? check this  
     X_Q=pullMarkerGeno(FR[ds], QTL.sims$o.add.qtl.ind, asRaw=F)
 
     X_Beta=QTL.sims$o.add.qtl.eff
@@ -337,12 +346,26 @@ simPheno=function(FR, genMapMarkers, QTL.sims,ds.size=NULL,returnG=T) {
     if(is.null(QTL.sims$o.h2.norm) | QTL.sims$o.h2.norm==F) {
         simy=XB+rnorm(nrow(G), mean=0, sd=QTL.sims$o.error.sd) 
         h2=var(XB)/(var(XB)+QTL.sims$o.error.sd^2)
-        print(h2) 
     } else {
         h2=QTL.sims$o.h2
-        simy= sqrt(h2)*scale(XB) + rnorm(nrow(G), mean=0, sd=sqrt((1-h2)/(h2*var(sqrt(h2)*scale(XB)))))
+        #g=as.vector(scale(XB))
+        #simy= g + rnorm(length(g), mean=0, sd=sqrt((1-h2)/(h2*(var(g))))) #h2*XB)))))
+
+        g=as.vector(XB)
+        gv=var(XB)
+        
+        # to derive expected error variance 
+        # tv=gv+ev
+        # gv/tv=h2
+        # gv=h2*tv
+        # gv/h2=tv
+        ev=gv/h2-gv
+        simy=g+rnorm(length(g), mean=0, sd=sqrt(ev))
+        g=as.vector(XB)
     }
     
+    print(paste( 'simulated total h^2:' , h2))
+
     if(returnG) {
 
         return(list(G=G,
