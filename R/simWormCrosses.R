@@ -85,7 +85,8 @@ simWormCrosses = function(SimWormParams, sexChr=F) {
        }
        
        ######---calculate phenotype effect for each individual in FN here ----------------------
-        if( !is.null(QTL.sims$sim.fitness) & QTL.sims$sim.fitness) {
+       #replicated code block, could consolidate 
+       if( !is.null(QTL.sims$sim.fitness) & QTL.sims$sim.fitness) {
             X_Q=pullMarkerGeno(FN, QTL.sims$f.add.qtl.ind, asRaw=F)
             X_Beta=QTL.sims$f.add.qtl.eff
             if(length(X_Beta)==1) {

@@ -5,7 +5,7 @@ library(qs)
 #library(Meiosis)
 library(AlphaSimR)
 library(Rfast)
-
+library(foreach)
 
 source.dir='/data0/elegans/xQTLSims/R/'
 data.dir='/data0/elegans/xQTLSims/'
@@ -45,33 +45,68 @@ elegans.isotypes.vcf.gt.qs=paste0(data.dir,'WI.20220216.vcf.GT.qs')
 preprocessVCF(elegans.isotype.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs)
 #======================================================================================
 
-, 
+
 #Laura start here ======================================================================
 vcf=qread(elegans.isotypes.vcf.qs)
 gt=qread(elegans.isotypes.vcf.gt.qs)
                       
 #existing fog2 ko strains 
-p.names=c('N2', 'ECA191', 'QG2832' ,'NIC195' ,'XZ1516' ,'QX1791' ,'QX1211','ECA369' ,'XZ1514','ECA738' ,'ECA760','ECA1255')
 
-p.names=c('ECA191', 'CB4856') #XZ1516')
 #founderPop = createFounderPop(vcf,gt, p.names, uchr) #c('N2', 'XZ1516'))
-founderPop = createFounderPop(vcf,gt, p.names, gmap, X.drop=T) #c('N2', 'XZ1516'))
 #sexChr=F
 #founderPop = createFounderPop(vcf,gt, p.names, X.only=T, X.drop=F) #c('N2', 'XZ1516'))
 #sexChr=T
 
 #cChr() is how we can eventually deal with X properly 
 
+# Setup for F1, deliberate crossings-------------------------------------------------------------
+# what we're calling 'mating.matrix' is really a matrix of who is crossing with who and will have replicated entries given expected broods 
+# female, male, mating=0/selfing=1
+# herm.index, male/herm index, mating=0/herm=1
+#biparental, reciprocal
+#mating.matrix=matrix(rbind(c(1,2),c(2,1)),nrow=2)
+#selfings=c(1,2)
 
 
+# some examples 
+#biparental, non-reciprocal ----------------------------------------------------------
+#in this case, mate herm N2 with male CB
+p.names=c('N2', 'CB4856') #XZ1516')
+mating.matrix=matrix(c(1,2), nrow=1)
+# in this case, given one-way cross, potentially allow N2 herm to self 
+selfings=1
+founderPop = createFounderPop(vcf,gt, p.names, gmap, X.drop=T) #c('N2', 'XZ1516'))
 SP=SimParam$new(founderPop)
+FN=newPop(founderPop, simParam=SP)
+#there's a structure here for keeping track of males that we are only partially leveraging
+FN@sex[2]='M'
+
+#-------------------------------------------------------------------------------------
+
+
+#multiparental setup -----------------------------------------------------------------
+p.names=c('N2', 'ECA191', 'QG2832' ,'NIC195' ,'XZ1516' ,'QX1791' ,'QX1211','ECA369' ,'XZ1514','ECA738' ,'ECA760','ECA1255')
+mating.matrix=matrix(rbind(c(1,2),c(3,4), c(5,6), c(7,8),c(9,10), c(11,12)), nrow=6)
+selfings=c(1,3,5,7,9,11)
+founderPop = createFounderPop(vcf,gt, p.names, gmap, X.drop=T) #c('N2', 'XZ1516'))
+SP=SimParam$new(founderPop)
+FN=newPop(founderPop, simParam=SP)
+FN@sex[mating.matrix[,2]]='M'
+
+#--------------------------------------------------------------------------------------
+
+
+#the vcf and gt objects are both pretty large, consider removing from workspace when not needed anymore
+rm(vcf)
+rm(gt)
+
+
 #unfortunately these functions fail to provide sufficient flexibility wrt trait architectures
 #and are behaving unexpectedly
 #SP$addTraitA(nQtlPerChr=1)
 #SP$setVarE(H2=0.4)
 
 #create founder population 
-FN=newPop(founderPop, simParam=SP)
 genMap=getGenMap(founderPop)
 
 #possible QTL architectures for fitness effects ---------------------
@@ -85,7 +120,7 @@ f.add.qtl.eff =  sample(ifelse(runif(f.nadditive)>.5,-1,1),replace=T)
 #---------------------------------------------------------------------
 
 #possible QTL architectures for traits orthogonal to fitness 
-o.nQTL=5
+o.nQTL=40
 o.nadditive=o.nQTL
 o.add.qtl.ind  = genMap$id[sort(sample(nmarker, o.nadditive))]
 o.add.qtl.eff =  sample(ifelse(runif(o.nadditive)>.5,-1,1),replace=T)
@@ -111,26 +146,9 @@ QTL.sims=list(#simulate fitness effects during panel construction --------------
               o.error.sd=1,
               # toggle to ignore residual error sd of trait effect and instead normalize
               # trait variance such that residual error is 1-h^2
-              o.h2.norm=F,
+              o.h2.norm=T,
               o.h2=.5)
 
-# Setup for F1, deliberate crossings-------------------------------------------------------------
-# what we're calling 'mating.matrix' is really a matrix of who is crossing with who and will have replicated entries given expected broods 
-# female, male, mating=0/selfing=1
-# herm.index, male/herm index, mating=0/herm=1
-#biparental, reciprocal
-#mating.matrix=matrix(rbind(c(1,2),c(2,1)),nrow=2)
-#selfings=c(1,2)
-#biparental, non-reciprocal
-#in this case, mate herm N2 with male CB
-mating.matrix=matrix(c(1,2), nrow=1)
-FN@sex[2]='M'
-# in this case, given one-way cross, potentially allow N2 herm to self 
-selfings=1
-
-#multiparental setup
-#mating.matrix=matrix(rbind(c(1,2),c(3,4), c(5,6), c(7,8),c(9,10), c(11,12)), nrow=6)
-#selfings=c(1,3,5,7,9,11)
 
 
 SimWormParams=list(
@@ -144,9 +162,9 @@ SimWormParams=list(
     #fraction of hermaphrodites that self
     selfing.rate=0.1 ,
     #bottleneck per generation   
-    max.per.gen=1e4,
+    max.per.gen=2e4,
     #how many total generations
-    max.gen=12,
+    max.gen=24,
     #Founder population genotypes
     FN=FN ,
     #simulation parameters 
@@ -164,18 +182,13 @@ FR=simWormCrosses(SimWormParams)
 
 
 #when functionalizing, return simy 
-
 #sanity check 
-summary(lm(simy~X_Q))
-
-rG=cor(simy, scale(G))
-
-plot(rG[1,])
-abline(v=match(QTL.sims$o.add.qtl.ind, colnames(G)))
+#summary(lm(simy~X_Q))
+#rG=cor(simy, scale(G))
+#plot(rG[1,])
+#abline(v=match(QTL.sims$o.add.qtl.ind, colnames(G)))
 #plot(colSums(G)/(nrow(G)*2))
 #======================================================================================================================
-
-
 
 
 countdf.h=simSequencingRefAlt(simy,G,depth=50, sel.frac=.1, lower.tail=F)
@@ -210,31 +223,84 @@ ggpubr::ggarrange(h1, u1, c1, nrow=3)
 
 
 
-QS=simPheno(FR,genMap$id,QTL.sims, ds.size=2e3)
+QS=simPheno(FR,genMap$id,QTL.sims, ds.size=4e3)
 
+QS=simPheno(FR,genMap$id,QTL.sims, returnG=F)
 
 #standardize genotypes 
 sG=Rfast::standardise(QS$G)
+LODs.1D=fasterLOD(length(QS$simy), scale(QS$simy), sG)
+plot(LODs.1D[1,])
+abline(v=match(QTL.sims$o.add.qtl.ind, colnames(QS$G)))
+
 #map QTL 
-qtl.detected=doTraitFDR(scale(QS$simy), sG, QS$G, nperm=1e2)
+qtl.detected=doTraitFDR(scale(QS$simy), sG, QS$G, nperm=1e2, doLODdrop=F)
+
+QS=simPheno(FR,genMap$id,QTL.sims, returnG=F)
+
+#simulate individual genotyping of selected tail
+
+htail=QS$ind[QS$simy> quantile(QS$simy, .9)]
+cntrl=QS$ind[sample.int(length(QS$simy), length(htail))]
+
+G.h=pullMarkerGeno(FR[htail],genMap$id,asRaw=F)
+G.c=pullMarkerGeno(FR[cntrl], genMap$id,asRaw=F)
+
+#first pass is to treat phenotype as binary and map using normal regression framework
+G=rbind(G.c, G.h)
+bt=c(rep(0,nrow(G.c)), rep(1,nrow(G.h)))
+
+#presumably this is the slowest step here?
+sG=Rfast::standardise(G)
+LODs.1D=fasterLOD(length(bt), scale(bt), sG)
+
+x11()
+par(mfrow=c(4,1))
+plot(LODs.1D[1,])
+abline(v=match(QTL.sims$o.add.qtl.ind, colnames(G)))
+#qtl.detected=doTraitFDR(scale(bt), sG, G, nperm=1e2, doLODdrop=F)
+
+af.h=(colSums(G.h)/(nrow(G.h)*2))
+af.c=(colSums(G.c)/(nrow(G.c)*2))
+
+acnt.h=colSums(G.h)
+rcnt.h=(nrow(G.h)*2)-acnt.h
+
+acnt.c=colSums(G.c)
+rcnt.c=(nrow(G.c)*2)-acnt.c
+
+#145
+library(RVAideMemoire)
+i=171974
+
+chisq=rep(NA, length(af.h))
+for(i in 1:length(af.h)){
+    if(i%%1000==0) { print(i)} 
+    tm=cbind(c(acnt.h[i],rcnt.h[i]), c(acnt.c[i],rcnt.c[i]))
+    chisq[i]=as.numeric(chisq.test(tm)$statistic)
+}
+
+x11()
+plot(sqrt(chisq))
+
+Z=cov(G[,i],bt)/sqrt((nrow(G)-1)*var(G[,i])*var(bt))
+
+
+G.test(cbind(c(acnt.h[i],rcnt.h[i]), c(acnt.c[i],rcnt.c[i])))
+i=1
 
 
 
 
+plot(af.h)
+plot(af.c)
+plot(af.h-af.c)
+abline(v=match(QTL.sims$o.add.qtl.ind, colnames(G)))
 
 
 
 
-
-
-
-
-
-
-
-
-
-
+#given allele frequency difference from multi-parent pooled sequencing (perhaps inferred perfectly from high coverage sequencing)
 
 
 
