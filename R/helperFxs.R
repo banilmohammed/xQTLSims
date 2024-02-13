@@ -232,7 +232,7 @@ createFounderPop=function(vcf, gt, p.names, X.only=F, X.drop=T) {
 #===========generate ref and alt counts given a simulated phenotype, a genotype matrix, a selection strength, 
 # sequencing depth, and whether we are selectign lower tail or upper tail =============================================
 simSequencingRefAlt=function(y, G, depth, sel.frac, lower.tail=F) {
-    y=simy
+    #y=simy
     lower.tail=F
     depth=50
 
@@ -320,20 +320,10 @@ simPheno=function(FR, genMapMarkers, QTL.sims,ds.size=NULL,returnG=T) {
   if(is.null(ds.size) | length(ds.size)>nInd(FR) ) {
       ds=seq(1,nInd(FR)) 
   }  else{
-      ds=sample.int(nInd(FR),ds.size)
+      ds=sort(sample.int(nInd(FR),ds.size))
   }
 
     #G=pullSegSiteGeno(FR[ds])
-    
-    G=pullMarkerGeno(FR[ds],genMapMarkers,asRaw=F)
-    af=(colSums(G)/(nrow(G)*2))
-    plot(af, ylab='ref/(ref+alt)', xlab='marker.index')
-
-    #fixed alt or fixed ref sites 
-    f.ref=af==0
-    f.alt=af==1
-    G=G[,!(f.ref|f.alt)]
-
     #also possible that sites that aren't segregating are assigned QTL ??? check this  
     X_Q=pullMarkerGeno(FR[ds], QTL.sims$o.add.qtl.ind, asRaw=F)
 
@@ -367,16 +357,52 @@ simPheno=function(FR, genMapMarkers, QTL.sims,ds.size=NULL,returnG=T) {
     print(paste( 'simulated total h^2:' , h2))
 
     if(returnG) {
+      G=pullMarkerGeno(FR[ds],genMapMarkers,asRaw=F)
+      af=(colSums(G)/(nrow(G)*2))
+      plot(af, ylab='ref/(ref+alt)', xlab='marker.index')
+
+      #fixed alt or fixed ref sites 
+      f.ref=af==0
+      f.alt=af==1
+      G=G[,!(f.ref|f.alt)]
 
         return(list(G=G,
+                    ind=ds,
                     X_Q=X_Q,
                     h2=h2,
                     simy=simy))
     } else{
-        return(list(h2=h2,
+        return(list(ind=ds,
+                    h2=h2,
                     X_Q=X_Q,
                     simy=simy))
     }
 }
 #==================================================================================================================
+
+
+phaseBiparental=function(df, p1.name, founderPop, genMap){
+
+        gID=genMap$id
+        p1.ref=pullMarkerGeno(founderPop, genMap$id)[p1.name,]==0
+        p1.ref=p1.ref[gID]
+        vname=names(p1.ref)
+
+        p1=c(df$ref[p1.ref], df$alt[!p1.ref])
+        vscramb=c(vname[p1.ref], vname[!p1.ref])
+        names(p1)=vscramb
+        p1=p1[vname]
+
+        p2=c(df$ref[!p1.ref], df$alt[p1.ref])
+        vscramb=c(vname[!p1.ref], vname[p1.ref])
+        names(p2)=vscramb
+        p2=p2[vname]
+        if(!is.null(df$expected)) {
+            expected.phased=ifelse(p1.ref, df$expected, 1-df$expected)
+            df$expected.phased=expected.phased
+         }
+         df$p1=p1
+         df$p2=p2
+    return(df)
+}
 

@@ -42,7 +42,7 @@ elegans.isotypes.vcf.gt.qs=paste0(data.dir,'WI.20220216.vcf.GT.qs')
 
 
 #run once, Laura skip this ============================================================
-preprocessVCF(elegans.isotype.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs)
+preprocessVCF(elegans.isotypes.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.gt.qs)
 #======================================================================================
 
 
@@ -164,7 +164,7 @@ SimWormParams=list(
     #bottleneck per generation   
     max.per.gen=2e4,
     #how many total generations
-    max.gen=24,
+    max.gen=12,
     #Founder population genotypes
     FN=FN ,
     #simulation parameters 
@@ -190,13 +190,18 @@ FR=simWormCrosses(SimWormParams)
 #plot(colSums(G)/(nrow(G)*2))
 #======================================================================================================================
 
+###############Block of code to simulate sequencing data and analysis for a bi-parental x-qtl####################################################################
+simFR=simPheno(FR, genMap$id, QTL.sims)
 
-countdf.h=simSequencingRefAlt(simy,G,depth=50, sel.frac=.1, lower.tail=F)
-countdf.l=simSequencingRefAlt(simy,G,depth=50, sel.frac=1 , lower.tail=F)
+countdf.h=simSequencingRefAlt(simFR$simy,simFR$G,depth=50, sel.frac=.1, lower.tail=F)
+#if you set sel.frac=1 sample the population of existing genotypes without QTL effects 
+countdf.l=simSequencingRefAlt(y=NULL, simFR$G,depth=50, sel.frac=1 , lower.tail=F)
 
+#sanity checks 
 plot(countdf.h$alt/(countdf.h$alt+countdf.h$ref))
 points(countdf.h$expected, col='red') #alt/(countdf$alt+countdf$ref))
 
+#sanity checks 
 plot(countdf.l$alt/(countdf.l$alt+countdf.l$ref))
 points(countdf.l$expected, col='red') 
 
@@ -209,9 +214,8 @@ countdf.l=phaseBiparental(countdf.l, p.names[1], founderPop, genMap)
 
 #QTL.sims$o.add.qtl.ind, asRaw=F)
 
-
-test  = calcAFD(countdf.h, experiment.name='high1',sample.size=1e4, sel.strength=.1, bin.width=1000, eff.length=300, uchr=as.roman(1:5))
-test2 = calcAFD(countdf.l, experiment.name='unsel1',sample.size=1e4, sel.strength=.1, bin.width=1000, eff.length=300, uchr=as.roman(1:5))
+test  = calcAFD(countdf.h, experiment.name='high1',sample.size=1e4, sel.strength=.1, bin.width=1000, eff.length=300, uchr=unique(genMap$chr) ) 
+test2 = calcAFD(countdf.l, experiment.name='unsel1',sample.size=1e4, sel.strength=1, bin.width=1000, eff.length=300, uchr=unique(genMap$chr) )
 results=calcContrastStats(results=list(test, test2), L='_high1', R='_unsel1')
 
 # test$expected.phased_high1=1-test$expected.phased_high1
@@ -220,7 +224,7 @@ h1=plotIndividualExperiment(test, 'high1')
 u1=plotIndividualExperiment(test2, 'unsel1')
 c1=plotContrast(results, 'high1', 'unsel1')
 ggpubr::ggarrange(h1, u1, c1, nrow=3) 
-
+####################################################################################################################################################################
 
 
 QS=simPheno(FR,genMap$id,QTL.sims, ds.size=4e3)
@@ -236,6 +240,8 @@ abline(v=match(QTL.sims$o.add.qtl.ind, colnames(QS$G)))
 #map QTL 
 qtl.detected=doTraitFDR(scale(QS$simy), sG, QS$G, nperm=1e2, doLODdrop=F)
 
+
+#simulate 
 QS=simPheno(FR,genMap$id,QTL.sims, returnG=F)
 
 #simulate individual genotyping of selected tail
@@ -270,20 +276,27 @@ acnt.c=colSums(G.c)
 rcnt.c=(nrow(G.c)*2)-acnt.c
 
 #145
-library(RVAideMemoire)
+#library(RVAideMemoire)
 i=171974
 
-chisq=rep(NA, length(af.h))
+chisq=chisq.p=rep(NA, length(af.h))
 for(i in 1:length(af.h)){
     if(i%%1000==0) { print(i)} 
     tm=cbind(c(acnt.h[i],rcnt.h[i]), c(acnt.c[i],rcnt.c[i]))
-    chisq[i]=as.numeric(chisq.test(tm)$statistic)
+    ctm=chisq.test(tm)
+    chisq[i]=as.numeric(ctm$statistic)
+    chisq.p[i]=as.numeric(ctm$p.value)
 }
 
 x11()
 plot(sqrt(chisq))
 
 Z=cov(G[,i],bt)/sqrt((nrow(G)-1)*var(G[,i])*var(bt))
+
+
+#test=(scale(t(G))%*% scale(bt))
+varG=Rfast::colVars(G) #apply(G,2,var)
+testZ=test/sqrt((nrow(G)-1)*varG*var(bt))
 
 
 G.test(cbind(c(acnt.h[i],rcnt.h[i]), c(acnt.c[i],rcnt.c[i])))
