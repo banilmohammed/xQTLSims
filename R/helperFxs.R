@@ -184,6 +184,11 @@ preprocessVCF=function(elegans.isotypes.vcf,elegans.isotypes.vcf.qs,elegans.isot
 }
 
 
+
+
+
+
+
 # take the larger vcf,  genotype calls, and a subset of parents 
 # extracts segregating sites 
 # return an alphaSimR founder population
@@ -229,21 +234,40 @@ createFounderPop=function(vcf, gt, p.names, X.only=F, X.drop=T) {
 }
 
 
+
+#calc alt-based AF in chunks
+calcAltAf=function(FR, markers, split.factor=2e4) {
+    
+    sm=split(markers, ceiling(seq_along(markers)/split.factor))
+    afr=list()
+    for(i in 1:length(sm)) {
+        print(i)
+            x=sm[[i]]
+          G= pullMarkerGeno(FR, x, asRaw=T)
+          afr[[as.character(i)]]=Rfast::colsums(G)/(nrow(G)*2)
+    }
+    afr=do.call('c', afr)
+    names(afr)=markers
+    return(afr)
+}
+
+
 #===========generate ref and alt counts given a simulated phenotype, a genotype matrix, a selection strength, 
 # sequencing depth, and whether we are selectign lower tail or upper tail =============================================
-simSequencingRefAlt=function(y, G, depth, sel.frac, lower.tail=F) {
-    #y=simy
-    lower.tail=F
-    depth=50
-
-    #fraction of alt alleles across pop
-    alt.af=colSums(G)/(nrow(G)*2)
-    #fraction of ref alleles across pop
-    ref.af=1-alt.af
-
+simSequencingRefAlt=function(y, FR, markers, depth, sel.frac, lower.tail=F) {
+    
+    #sel.frac should be a number between 0 and 1 
+    #fraction of the tail you're selecting (1 = the whole distribution)
     #sel.frac=.1
     if(sel.frac==1) {
-      sel.indv.af=alt.af
+        #fraction of alt alleles across pop
+        #alt.af=colSums(G)/(nrow(G)*2)
+        alt.af=calcAltAf(FR,markers)
+        #fraction of ref alleles across pop
+        ref.af=1-alt.af
+    
+        sel.indv.af=alt.af
+        nIndiv=nInd(FR)
     } else{
         if(lower.tail==F) {
             sel.indv=which(y>quantile(y,1-sel.frac))
@@ -251,15 +275,18 @@ simSequencingRefAlt=function(y, G, depth, sel.frac, lower.tail=F) {
         else{
             sel.indv=which(y< quantile(y,sel.frac))
         }
-       sel.indv.x=G[sel.indv,]
-       sel.indv.af=colSums(sel.indv.x)/(nrow(sel.indv.x)*2)
+       sel.indv.af=calcAltAf(FR[sel.indv],markers)
+       #sel.indv.x=G[sel.indv,]
+       #sel.indv.af=colSums(sel.indv.x)/(nrow(sel.indv.x)*2)
+       nIndiv=nInd(FR[sel.indv])
     }
 
     #freq of alt
     a=rbinom(n=length(sel.indv.af),size=depth, prob=sel.indv.af)
     #freq of ref
     r=rbinom(n=length(sel.indv.af),size=depth, prob=1-sel.indv.af)
-    countdf=data.frame(ID=colnames(G), expected=1-sel.indv.af, ref=r, alt=a)
+    countdf=data.frame(ID=markers, expected=1-sel.indv.af, ref=r, alt=a)
+    attr(countdf, 'nInd')=nIndiv
     return(countdf)
 }
 #========================================================================================================================

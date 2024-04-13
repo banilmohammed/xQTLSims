@@ -49,7 +49,10 @@ preprocessVCF(elegans.isotypes.vcf,elegans.isotypes.vcf.qs,elegans.isotypes.vcf.
 #Laura start here ======================================================================
 vcf=qread(elegans.isotypes.vcf.qs)
 gt=qread(elegans.isotypes.vcf.gt.qs)
-                      
+       
+xz.vcf=vcf[subgt[,1]!=subgt[,2], samples=c('N2', 'XZ1516')]
+write.vcf(xz.vcf, file='/data0/elegans/xQTLSims/N2_XZ1516.vcf.gz')
+
 #existing fog2 ko strains 
 
 #founderPop = createFounderPop(vcf,gt, p.names, uchr) #c('N2', 'XZ1516'))
@@ -120,7 +123,7 @@ f.add.qtl.eff =  sample(ifelse(runif(f.nadditive)>.5,-1,1),replace=T)
 #---------------------------------------------------------------------
 
 #possible QTL architectures for traits orthogonal to fitness 
-o.nQTL=40
+o.nQTL=20
 o.nadditive=o.nQTL
 o.add.qtl.ind  = genMap$id[sort(sample(nmarker, o.nadditive))]
 o.add.qtl.eff =  sample(ifelse(runif(o.nadditive)>.5,-1,1),replace=T)
@@ -190,12 +193,12 @@ FR=simWormCrosses(SimWormParams)
 #plot(colSums(G)/(nrow(G)*2))
 #======================================================================================================================
 
-###############Block of code to simulate sequencing data and analysis for a bi-parental x-qtl####################################################################
-simFR=simPheno(FR, genMap$id, QTL.sims)
+#simulate a phenotype after 
+simFR=simPheno(FR, genMapMarkers=genMap$id, QTL.sims=QTL.sims,returnG=F)
 
-countdf.h=simSequencingRefAlt(simFR$simy,simFR$G,depth=50, sel.frac=.1, lower.tail=F)
+countdf.h=simSequencingRefAlt(simFR$simy,FR, genMap$id, depth=10000, sel.frac=.1, lower.tail=F)
 #if you set sel.frac=1 sample the population of existing genotypes without QTL effects 
-countdf.l=simSequencingRefAlt(y=NULL, simFR$G,depth=50, sel.frac=1 , lower.tail=F)
+countdf.l=simSequencingRefAlt(y=NULL, FR,genMap$id, depth=10000, sel.frac=1 , lower.tail=F)
 
 #sanity checks 
 plot(countdf.h$alt/(countdf.h$alt+countdf.h$ref))
@@ -205,7 +208,7 @@ points(countdf.h$expected, col='red') #alt/(countdf$alt+countdf$ref))
 plot(countdf.l$alt/(countdf.l$alt+countdf.l$ref))
 points(countdf.l$expected, col='red') 
 
-
+###############Block of code to simulate sequencing data and analysis for a bi-parental x-qtl####################################################################
 countdf.h=phaseBiparental(countdf.h, p.names[1], founderPop, genMap)
 countdf.l=phaseBiparental(countdf.l, p.names[1], founderPop, genMap)
 
@@ -225,6 +228,57 @@ u1=plotIndividualExperiment(test2, 'unsel1')
 c1=plotContrast(results, 'high1', 'unsel1')
 ggpubr::ggarrange(h1, u1, c1, nrow=3) 
 ####################################################################################################################################################################
+
+
+
+acnt.h=countdf.h$alt
+rcnt.h=countdf.h$ref #(nrow(G.h)*2)-acnt.h
+
+acnt.c=countdf.l$alt #colSums(G.c)
+rcnt.c=countdf.l$ref #(nrow(G.c)*2)-acnt.c
+
+#145
+#library(RVAideMemoire)
+#i=171974
+
+chisq=chisq.p=rep(NA, length(acnt.h))
+for(i in 1:length(acnt.h)){
+    if(i%%10000==0) { print(i)} 
+    # high tail alt, unselected alt
+    # high tail ref, unselected ref 
+    tm=cbind(c(acnt.h[i],rcnt.h[i]), 
+             c(acnt.c[i],rcnt.c[i]))
+    ctm=chisq.test(tm)
+    chisq[i]=as.numeric(ctm$statistic)
+    chisq.p[i]=as.numeric(ctm$p.value)
+}
+sgn=(((acnt.h/rcnt.h)/(acnt.c/rcnt.c)>1)*2)-1
+plot(sgn*chisq)
+abline(v=match(QTL.sims$o.add.qtl.ind, genMap$id), col=(QTL.sims$o.add.qtl.eff)+2)
+
+n=sum(ctm$observed)
+sr <-rowSums(ctm$observed) # rowSums(x)
+sc <- colSums(ctm$observed)
+E <- outer(sr, sc)/n
+#equivalent to 
+tcrossprod(sr,sc)
+
+
+
+#standard Chi-square statistic
+stat=sum(rowSums(((ctm$observed-ctm$expected)^2)/ctm$expected))
+pchisq(stat,1,lower.tail=F)
+#with Yate's continuity correction 
+stat=sum(rowSums(((abs(ctm$observed-ctm$expected)-.5)^2)/ctm$expected))
+pchisq(stat,1,lower.tail=F)
+
+
+
+
+
+
+
+
 
 
 QS=simPheno(FR,genMap$id,QTL.sims, ds.size=4e3)
