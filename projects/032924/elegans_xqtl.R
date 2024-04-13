@@ -6,13 +6,16 @@ library(AlphaSimR)
 library(Rfast)
 library(ggpubr)
 
-source.dir='/data0/elegans/xQTLSims/R/'
-data.dir='/data0/elegans/xQTLSims/data/'
-project.dir='/data0/elegans/xQTLSims/projects/032924/'
+#pull from github
+xQTLSims.dir = '/data0/elegans/xQTLSims/'
+
+source.dir=paste0(xQTLSims.dir, 'R/')
+data.dir=paste0(xQTLSims.dir, 'data/')
+project.dir=paste0(xQTLSims.dir, '032924/')
 
 #function to simulate crosses, treatement of X is incomplete/broken
+#and additional helper functions
 source(paste0(source.dir, 'simWormCrosses.R'))
-#additional helper functions 
 source(paste0(source.dir, 'helperFxs.R'))
 source(paste0(source.dir, 'makeCountTables.R'))
 
@@ -24,11 +27,12 @@ gmap=restructureGeneticMap(gmap.file)
 
 #pretty intensive memory usage here
 #include web link to vcf file 
-elegans.isotypes.vcf=paste0(data.dir,'WI.20220216.impute.isotype.vcf.gz')
+#elegans.isotypes.vcf=paste0(data.dir,'WI.20220216.impute.isotype.vcf.gz')
 
 #filtered vcf as qsave objects
-# find the premade objects here folks:
+# !!!! find the premade objects here folks !!!! :
 # /u/project/kruglyak/jsbloom/xQTL/elegans/ref/
+#and place in your data.dir
 elegans.isotypes.vcf.qs=paste0(data.dir,'WI.20220216.vcf.qs')
 
 #filtered numeric gt calls from vcf  as qsave object
@@ -42,7 +46,6 @@ elegans.isotypes.vcf.gt.qs=paste0(data.dir,'WI.20220216.vcf.GT.qs')
 #Laura start here ======================================================================
 vcf=qread(elegans.isotypes.vcf.qs)
 gt=qread(elegans.isotypes.vcf.gt.qs)
-
 
 sample.key.file=paste0(project.dir, 'samplekey_032924.txt')
 sample.key=read_tsv(sample.key.file)
