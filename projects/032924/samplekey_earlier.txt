@@ -1,0 +1,7 @@
+sample name	parent 1	parent 2	timepoint	condition
+S1	N2	XZ1516	3	RNAi
+S2	N2	XZ1516	3	KO
+S3	N2	XZ1516	4	RNAi
+S4	N2	XZ1516	4	KO
+S5	N2	XZ1516	5	RNAi
+S6	N2	XZ1516	5	KO
