@@ -293,8 +293,8 @@ QTL.sims=list(#simulate fitness effects during panel construction --------------
               # trait variance such that residual error is 1-h^2
               o.h2.norm=F,
               o.h2=.5)
-qsave(QTL.sims, file='/data0/xQTLSims/projects/yeast_sims/metaQTL.qs')
-QTL.sims=qread('/data0/xQTLSims/projects/yeast_sims/metaQTL.qs')
+qsave(QTL.sims, file='/data0/xQTLSims/projects/yeast_sims/multibiparental/metaQTL.qs')
+#QTL.sims=qread('/data0/xQTLSims/projects/yeast_sims/metaQTL.qs')
 
 
 max.per.gen=1e5
@@ -533,6 +533,7 @@ abline(0,1)
 
 
 
+#qsave(meta.results, file='/data0/xQTLSims/projects/yeast_sims/multibiparental/metaResults.qs')
 
 
 

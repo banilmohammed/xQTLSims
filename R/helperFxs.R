@@ -352,16 +352,19 @@ simPheno=function(FR, genMapMarkers, QTL.sims,ds.size=NULL,returnG=T) {
 
     #G=pullSegSiteGeno(FR[ds])
     #also possible that sites that aren't segregating are assigned QTL ??? check this  
-    X_Q=pullMarkerGeno(FR[ds], QTL.sims$o.add.qtl.ind, asRaw=F)
+    m.used=match(QTL.sims$o.add.qtl.ind, genMapMarkers)   
 
-    X_Beta=QTL.sims$o.add.qtl.eff
+    X_Q=pullMarkerGeno(FR[ds], QTL.sims$o.add.qtl.ind[!is.na(m.used)], asRaw=F)
+
+    X_Beta=QTL.sims$o.add.qtl.eff[!is.na(m.used)]
+
     if(length(X_Beta)==1) {
         XB=X_Q*X_Beta
     } else {XB=X_Q%*%X_Beta    }
 
     #two ways to 
     if(is.null(QTL.sims$o.h2.norm) | QTL.sims$o.h2.norm==F) {
-        simy=XB+rnorm(nrow(G), mean=0, sd=QTL.sims$o.error.sd) 
+        simy=XB+rnorm(nrow(X_Q), mean=0, sd=QTL.sims$o.error.sd) 
         h2=var(XB)/(var(XB)+QTL.sims$o.error.sd^2)
     } else {
         h2=QTL.sims$o.h2

@@ -238,6 +238,20 @@ genMap$maf=maf[match(genMap$id, names(maf))]
 #g.s=pullMarkerGeno(founderPop[1:97], genMap$id)
 
 #possible QTL architectures for fitness effects ---------------------
+#QTL.sims=qread('/data0/xQTLSims/projects/yeast_sims/metaQTL.qs')
+
+#multi-generational intercross
+#then basically full pop
+p.names=p.names[1:16]
+founderPop = createFounderPop(vcf,gt, p.names, gmap, X.drop=F) #c('N2', 'XZ1516'))
+SP=SimParam$new(founderPop)
+FN=newPop(founderPop, simParam=SP)
+#there's a structure here for keeping track of males that we are only partially leveraging
+#FN@sex[2]='M'
+#genMap=getGenMap(founderPop)
+genMap=getGenMap(founderPop) #genMap[,-1]
+genMap$maf=maf[match(genMap$id, names(maf))]
+
 nmarker=nrow(genMap)
 #for example a TA element
 f.nQTL=1
@@ -249,11 +263,12 @@ f.add.qtl.eff =  sample(ifelse(runif(f.nadditive)>.5,-1,1),replace=T)
 
 #possible QTL architectures for traits orthogonal to fitness 
 
-set.seed(10)
+set.seed(15)
 
 # number of large effect QTL
 
-o.nQTL.r=750
+#o.nQTL.r=750/
+o.nQTL.r=160
 o.nQTL.c=o.nQTL.r/4
 o.add.qtl.r.e=1
 o.add.qtl.c.e=.5
@@ -293,8 +308,235 @@ QTL.sims=list(#simulate fitness effects during panel construction --------------
               # trait variance such that residual error is 1-h^2
               o.h2.norm=F,
               o.h2=.5)
-qsave(QTL.sims, file='/data0/xQTLSims/projects/yeast_sims/metaQTL.qs')
-QTL.sims=qread('/data0/xQTLSims/projects/yeast_sims/metaQTL.qs')
+
+qsave(QTL.sims, file='/data0/xQTLSims/projects/yeast_sims/intercross/metaQTL.qs')
+
+
+
+
+max.per.gen=96000 #00
+mmat=rbind(expand.grid(1, 2:16), 
+      expand.grid(2, 3:16),
+      expand.grid(3, 4:16),
+      expand.grid(4, 5:16), 
+      expand.grid(5, 6:16), 
+      expand.grid(6, 7:16),
+      expand.grid(7, 8:16),
+      expand.grid(8, 9:16),
+      expand.grid(9, 10:16),  
+      expand.grid(10, 11:16),
+      expand.grid(11, 12:16),
+      expand.grid(12, 13:16),
+      expand.grid(13, 14:16),
+      expand.grid(14, 15:16),
+      expand.grid(15, 16))
+
+
+mmat=cbind(c(1,2,3,4,5,6,7,8,9, 10,11,12,13,14,15, 16),
+           c(2,3,4,5,6,7,8,9,10,11,12,13,14,15,16, 1))
+
+#mini=makeCross(FN, cbind(1, seq(2:17)), nProgeny=1, simParam=SP)
+mini=makeCross(FN, mmat, nProgeny=1, simParam=SP)
+
+#100 progeny biparental cross to BY
+
+#sporulation 1
+mini.sample=makeDH(mini, nDH=max.per.gen/mini@nInd, simParam=SP)
+#then one gen intercross 
+m1=(sample.int(max.per.gen, round(max.per.gen/2)))
+m2=which(!(seq(1,max.per.gen) %in% m1))
+mmat=cbind(m1,m2)
+
+#mating 2
+f3=makeCross(mini.sample, mmat, nProgeny=1,simParam=SP)
+rm(mini.sample)
+#end pop about 50k
+#sporutlation 2
+    f4=makeDH(f3, nDH=2, simParam=SP) #matrix(rep(c(1,2), each=1), ncol=2) , nProgeny=1, simParam=SP)
+rm(f3)
+
+m1=(sample.int(max.per.gen, round(max.per.gen/2)))
+m2=which(!(seq(1,max.per.gen) %in% m1))
+mmat=cbind(m1,m2)
+#mating 3
+f5=makeCross(f4, mmat, nProgeny=1,simParam=SP)
+#rm(f4)
+#sporulation 3
+#end pop about 50k
+    f6=makeDH(f5, nDH=2, simParam=SP) #matrix(rep(c(1,2), each=1), ncol=2) , nP
+rm(f5)
+
+m1=(sample.int(max.per.gen, round(max.per.gen/2)))
+m2=which(!(seq(1,max.per.gen) %in% m1))
+mmat=cbind(m1,m2)
+#mating 4
+f7=makeCross(f6, mmat, nProgeny=1,simParam=SP)
+#rm(f6)
+#end pop about 50k
+#sporulation 4
+    f8=makeDH(f7, nDH=2, simParam=SP) #matrix(rep(c(1,2),
+rm(f7)
+
+m1=(sample.int(max.per.gen, round(max.per.gen/2)))
+m2=which(!(seq(1,max.per.gen) %in% m1))
+mmat=cbind(m1,m2)
+#mating 5
+f9=makeCross(f8, mmat, nProgeny=1,simParam=SP)
+#rm(f8)
+#end pop about 50k
+#sporulation 5
+    f10=makeDH(f9, nDH=2, simParam=SP) #matrix(rep(c(1,2)
+rm(f9)
+
+
+#qsave(f8, file='/data0/xQTLSims/projects/yeast_sims/intercross/f8.qs')
+#ds=sample.int(48000,1e4)
+#[ds]
+
+fuse=mini.sample
+g=pullMarkerGeno(fuse, genMap$id[genMap$chr=='chrVI'])
+#dg=duplicated(g)
+#g=g[,-dg]
+#gsum=colSums(g)
+#test=which(gsum==0 | gsum==96000*2)
+#g=g[,-test]
+#perfect genotypes 
+sg=standardise(g)
+LD= crossprod(sg)/(nrow(sg)-1)
+attr(LD, 'eigen')=eigen(LD, symmetric=T)
+length(na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g)))) #genMaps$id)))
+na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g)))
+
+
+g.ds=standardise(g[sample(nrow(g), 1e4),])
+LD.ds= crossprod(g.ds)/(nrow(g.ds)-1)
+attr(LD.ds, 'eigen')=eigen(LD.ds, symmetric=T)
+
+
+simFR=simPheno(fuse, genMapMarkers=genMap$id, QTL.sims=QTL.sims, returnG=F)
+
+summary(lm(simFR$simy~g[,na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g)))]))
+#ess=susie(sg,simFR$simy, L=20,verbose=T)
+#plot(susie_get_pip(ess))
+#abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
+
+ss=univariate_regression(sg,scale(simFR$simy))
+z=ss$betahat/ss$sebetahat
+ess2=susie_rss(z=z,  R=LD, n=5e4, L=10, verbose=T, estimate_residual_variance=T)
+plot(susie_get_pip(ess2))
+abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
+
+
+sel.frac=.1
+depth=1000
+countdf.h=simSequencingRefAlt(simFR$simy,fuse, genMap$id, depth=depth, sel.frac=sel.frac, lower.tail=F)
+    #if you set sel.frac=1 sample the population of existing genotypes without QTL effects 
+    #countdf.l=simSequencingRefAlt(y=NULL, FR,genMaps$id, depth=depth, sel.frac=1 , lower.tail=F)
+ds.ind=sort(sample(max.per.gen, max.per.gen*sel.frac))
+countdf.l=simSequencingRefAlt(y=NULL, fuse[ds.ind],genMap$id, depth=depth, sel.frac=1 , lower.tail=F)
+
+
+    acnt.h=countdf.h$alt
+    rcnt.h=countdf.h$ref #(nrow(G.h)*2)-acnt.h
+
+    acnt.c=countdf.l$alt #colSums(G.c)
+    rcnt.c=countdf.l$ref #(nrow(G.c)*2)-acnt.c
+
+    #145
+    #library(RVAideMemoire)
+    #i=171974
+    chisq=chisq.p=rep(NA, length(acnt.h))
+    for(j in 1:length(acnt.h)){
+        if(j%%10000==0) { print(j)} 
+        # high tail alt, unselected alt
+        # high tail ref, unselected ref 
+        tm=cbind(c(acnt.h[j],rcnt.h[j]), 
+                 c(acnt.c[j],rcnt.c[j]))
+        ctm=chisq.test(tm)
+        chisq[j]=as.numeric(ctm$statistic)
+        chisq.p[j]=as.numeric(ctm$p.value)
+    }
+    sgn=-1*((((acnt.h/rcnt.h)/(acnt.c/rcnt.c)>1)*2)-1)
+ #   plot(sgn*chisq)
+  
+    rawZ=sgn*sqrt(chisq)
+    
+    schr='chrVI'
+    
+    zsub=rawZ[genMap$chr==schr]
+    lambda=estimate_s_rss(zsub, LD, n=1e4)
+    condz_in=kriging_rss(zsub, LD, n=1e4, s=lambda)
+    zcond=condz_in$conditional_dist$condmean/sqrt(condz_in$conditional_dist$condvar)
+
+    par(mfrow=c(2,1))
+    plot(zsub, ylab='Z from Chisq test')
+    plot(zcond, ylab='expected Z given LD and obs Z') 
+    est=susie_rss(z=zcond,  R=LD, n=5e3, L=10, verbose=T, estimate_residual_variance=T)
+    x11()
+    plot(est$pip, col='black', ylab='PIP')
+        abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
+      
+    lambda=estimate_s_rss(zsub, LD.ds, n=1e4)
+    condz_in=kriging_rss(zsub, LD.ds, n=1e4, s=lambda)
+    zcond=condz_in$conditional_dist$condmean/sqrt(condz_in$conditional_dist$condvar)
+
+    est=susie_rss(z=zcond,  R=LD.ds, n=5e3, L=10, verbose=T, estimate_residual_variance=T)
+    x11()
+    plot(est$pip, col='black', ylab='PIP')
+        abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
+
+    dev.off()
+
+    results$zcond=0
+    results$pip=0
+
+    
+    for(schr in uchr) {
+        print(schr)
+        #schr='chrV'
+        g=pullMarkerGeno(FR[ds.ind], genMaps$id[genMaps$chr==schr])
+        sg=scale(g)
+        LD= crossprod(sg)/(nrow(sg)-1)
+        attr(LD, 'eigen')=eigen(LD, symmetric=T)
+        length(na.omit(match(QTL.sims$o.add.qtl.ind, genMaps$id)))
+        na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g)))
+  
+        zsub=results$rawZ[results$chrom==schr]
+        #zsub=results$z[results$chrom==schr]
+        #zsub[is.na(zsub)]=zsub[!is.na(zsub)][1]
+        #est2=susie_rss(z=zsub,  R=LD, n=5e3, L=10, verbose=T, estimate_residual_variance=T)
+       
+        lambda=estimate_s_rss(zsub, LD, n=1e4)
+        condz_in=kriging_rss(zsub, LD, n=1e4, s=lambda)
+        zcond=condz_in$conditional_dist$condmean/sqrt(condz_in$conditional_dist$condvar)
+   
+        par(mfrow=c(2,1))
+        plot(zsub)
+        points(zcond, col='blue')
+        abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
+
+        est=susie_rss(z=zcond,  R=LD, n=5e3, L=10, verbose=T, estimate_residual_variance=T)
+
+        plot(est$pip, col='red')
+        abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
+        dev.off()
+
+        results$pip[results$chrom==schr]=est$pip
+        results$zcond[results$chrom==schr]=zcond
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 max.per.gen=1e5
