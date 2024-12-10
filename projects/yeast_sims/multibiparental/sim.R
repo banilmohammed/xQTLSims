@@ -8,11 +8,9 @@ library(ggpubr)
 library(susieR)
 
 #pull from github
-xQTLSims.dir = '/data0/xQTLSims/'
+xQTLSims.dir = '/u/home/n/nmohamm/project-kruglyak/xQTLSims/'
 
 source.dir=paste0(xQTLSims.dir, 'R/')
-#data.dir=paste0(xQTLSims.dir, 'data/')
-#project.dir=paste0(xQTLSims.dir, 'projects/032924/')
 
 #function to simulate crosses, treatement of X is incomplete/broken
 #and additional helper functions
@@ -22,16 +20,29 @@ source(paste0(source.dir, 'makeCountTables.R'))
 
 
 #unique chromosomes 
-#yeast
 uchr=paste0('chr', as.character(as.roman(1:16)))
-#uchr=c(as.character(as.roman(1:5)), 'X') #paste0('chr', as.roman(1:16))
 
-#elegans
-#gmap.file=paste0(data.dir, 'geneticMapXQTLsnplist.rds')
-#gmap=restructureGeneticMap(gmap.file)
+# file that contains all gene maps that i guess is separated by yeast strains?
 gmaps=readRDS(system.file('reference', 'yeast_gmaps.RDS', package='xQTLStats'))
+
+# gmap structure:
+# list containing 16 chromosome elements
+# each chrom element is a dataframe containing actual gene map for markers along the chrom
+
+# dataframe structure:
+# marker: name of marker on chrom
+# map: centimorgan "distance" that represents on average how likely recombination is to occur at that loci
+#	* higher distance means less LD across other markers, lower distance means more LD aross other markers
+#	* distance is an average measure across all pairwise comparisons of markers?
+# chrom: chrom marker is on
+# pos: genomic position on chrom
+
+# pull out a specific gene map
 gmap=gmaps[['A']]
 
+
+# create the annotated mega VCF
+# need to parse whats actually happening here
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------
 #read new vcfs 
@@ -163,115 +174,333 @@ vcf.dir='/data1/yeast/reference/pop_vcfs/'
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-mega_filtered=qread(paste0(vcf.dir, '1011/mega_filtered.qs'))
+# cohort vcf file that get gets filtered / transformed in the section above, list containing vcf + gt
+# structure:
+# vcf: vcfR object containing actual vcf entries
+# gt: named vector containing genotypes of yeast strains, cols are yeast strain 3 letter codes, rows are markers, elements are genotypes
+#	* 0 is ref allele, 1 is alt allele, NA is neither?
+mega_filtered=qread('/u/home/n/nmohamm/project-kruglyak/xQTLSims/projects/yeast_sims/multibiparental/mega_filtered.qs')
+
+# pull out the vcf entry (vcfR object)
 vcf=mega_filtered$vcf
+# pull out the genotype entries (num vector w/ marker + genotype info added as charac vectors)
 gt=mega_filtered$gt
+# remove the og file from memory?
 rm(mega_filtered)
 
 
 #calc maf 
+
+# sum up number of alt alleles for each marker
 altcnt=rowSums(gt, na.rm=T)
+# number of non NA alleles
 nna=rowSums(!is.na(gt))
+# calculate the minor allele frequency
 af=altcnt/nna
+# make all elements show the MAF (if og MAF is above 0.5 show the actual MAF)
 af[af>.5]=1-af[af>.5]
 maf=af
+# do some marker name shuffling, remove the last integer in the name
+# chrI_943_3 -> chrI_943
+# idk what the last int represents
 tna=data.table::tstrsplit(names(maf), '_')
 mid=paste0(tna[[1]],'_', tna[[2]])
+
+# assign new names to maf named vector
 names(maf)=mid
 
+#################################################################################
+
+
+# guessing this section has to do with real data? skipping for now...
+
+filt_allele_count <- function(df, names) {
+	df_in <- read_delim(df, delim = "\t")
+	df_marker <- df_in %>% mutate(marker = str_c(contig, position, sep = "_"))
+	df_out <- df_marker %>% filter(marker %in% names) %>% select(-marker)
+	return(df_out)
+}
+
+get_seg_names <- function(gt, name) {
+	df_name <- gt[, name]
+	df_name_only <- df_name[df_name == 1]
+	df_output <- df_name_only[!is.na(df_name_only)]
+	names(df_output) <- sub("_[^_]+$", "", names(df_output))
+	return(names(df_output))
+}
+
 #sample.key=as_tibble(data.frame(s=c('G1_KANa_S62', 'G2_NATalpha_S63'), p1=rep('BYa',2), p2=rep('CBS2888a',2)))
+# setup cross sample info
+# 3 cols: s(sample name), p1 (parent 1), p2 (parent 2)
 sample.key=as_tibble(data.frame(s=c('G1_KANa_S62', 'G2_NATalpha_S63'), p1=rep('S288C',2), p2=rep('ABL',2)))
 names(sample.key)=c('sample name', 'parent 1', 'parent 2')
-sample.dir='/data0/xQTLSims/projects/061024/data/' #~/Desktop/' #/media/hoffman2/lcrisman/Dmagicmarker_042024/count_files/'
+# this is a data source, dont change for now
+sample.dir='/data0/xQTLSims/projects/061024/data/'
 
 
-countdfs=makeCountTables(sample.key,sample.dir, vcf,gt, sample.suffix='.txt')
+#countdfs=makeCountTables(sample.key,sample.dir, vcf,gt, sample.suffix='.txt')
+sample.suffix='.txt'
+# from xQTLSims/R/makeCountTables.R
+# pull out ref / allele counts and phase variants
+countdfs=makeCountTables(sample.key, vcf, gt)
 
+makeCountTables=function(sample_dir, allele_counts, p.names, vcf, gt) {
+	founderPop = createFounderPop(vcf,gt, p.names, gmap, X.drop=F)
+	genMap=getGenMap(founderPop)
+	scounts <- read_tsv(str_c(sample_dir, "/", allele_counts))
 
+	scounts.sub=scounts[paste0(scounts$contig, '_', scounts$position) %in% genMap$id,]
+        scounts=data.frame(id=paste0(scounts.sub$contig, '_', scounts.sub$position),ref=scounts.sub$refCount, alt=scounts.sub$altCount)
+        scounts=left_join(genMap, scounts, by='id')
+
+        scounts$ref[is.na(scounts$ref)]=0
+        scounts$alt[is.na(scounts$alt)]=0
+        names(scounts)[1]='ID'
+
+	countdf=phaseBiparental(scounts, p.names[1], founderPop, genMap)
+        
+        #note, we need a better structure for keeping track of which parent is which 
+        attr(countdf, 'p1')=p.names[1]
+        attr(countdf, 'p2')=p.names[2]
+
+	return(countdf)
+
+}
+
+countdfs = list()
+sample_dir <- "/u/project/kruglyak/nmohamm/xQTL-Simulation-Pipeline/lauren_xqtl_exp/allele_counts"
+
+cbsa <- "cbs2888a_allele_filt.tsv"
+p.names <- c("S288C", "ABL")
+countdf <- makeCountTables(sample_dir, cbsa, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "a")
+countdfs[[snn]] = countdf
+
+cbsx <- "cbs2888x_allele_filt.tsv"
+p.names <- c("S288C", "ABL")
+countdf <- makeCountTables(sample_dir, cbsx, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "x")
+countdfs[[snn]] = countdf
+
+cliba <- "clib192a_allele_filt.tsv"
+p.names <- c("S288C", "AAM")
+countdf <- makeCountTables(sample_dir, cliba, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "a")
+countdfs[[snn]] = countdf
+
+clibx<- "clib192x_allele_filt.tsv"
+p.names <- c("S288C", "AAM")
+countdf <- makeCountTables(sample_dir, clibx, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "x")
+countdfs[[snn]] = countdf
+
+pw5a <- "pw5a_allele_filt.tsv"
+p.names <- c("S288C", "ADE")
+countdf <- makeCountTables(sample_dir, pw5a, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "a")
+countdfs[[snn]] = countdf
+
+pw5x <- "pw5x_allele_filt.tsv"
+p.names <- c("S288C", "ADE")
+countdf <- makeCountTables(sample_dir, pw5x, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "x")
+countdfs[[snn]] = countdf
+
+uc8a <- "uc8a_allele_filt.tsv"
+p.names <- c("S288C", "ACT")
+countdf <- makeCountTables(sample_dir, uc8a, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "a")
+countdfs[[snn]] = countdf
+
+uc8x <- "uc8x_allele_filt.tsv"
+p.names <- c("S288C", "ACT")
+countdf <- makeCountTables(sample_dir, uc8x, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "x")
+countdfs[[snn]] = countdf
+
+y12a <- "y12a_allele_filt.tsv"
+p.names <- c("S288C", "ACK")
+countdf <- makeCountTables(sample_dir, y12a, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "a")
+countdfs[[snn]] = countdf
+
+y12x <- "y12x_allele_filt.tsv"
+p.names <- c("S288C", "ACK")
+countdf <- makeCountTables(sample_dir, y12x, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "x")
+countdfs[[snn]] = countdf
+
+yjm454a <- "yjm454a_allele_filt.tsv"
+p.names <- c("S288C", "ABH")
+countdf <- makeCountTables(sample_dir, yjm454a, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "a")
+countdfs[[snn]] = countdf
+
+yjm454x <- "yjm454x_allele_filt.tsv"
+p.names <- c("S288C", "ABH")
+countdf <- makeCountTables(sample_dir, yjm454x, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "x")
+countdfs[[snn]] = countdf
+
+yps163a <- "yps163a_allele_filt.tsv"
+p.names <- c("S288C", "AVI")
+countdf <- makeCountTables(sample_dir, yps163a, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "a")
+countdfs[[snn]] = countdf
+
+yps163x <- "yps163x_allele_filt.tsv"
+p.names <- c("S288C", "AVI")
+countdf <- makeCountTables(sample_dir, yps163x, p.names, vcf, gt)
+snn = str_c(paste(p.names, collapse="_"), "x")
+countdfs[[snn]] = countdf
 
 #should parallelize this .... yawn 
+
+# from xQTLStats/R/xQTL_stats.R
+# calculating allele frequency differences
 afds=lapply(names(countdfs), function(snn) {
        calcAFD(countdfs[[snn]], experiment.name=snn,sample.size=1e4, sel.strength=.9) #, bin.width=3000, eff.length=2000, uchr=uchr)
       })
 names(afds)=names(countdfs)
 
 
+# from xQTLStats/R/xQTL_stats.R
+# plot allele frequency differences
 plots=lapply(names(afds), function(snn) {
     plotIndividualExperiment(afds[[snn]], snn) 
       })
 a=ggarrange(plots[[1]],plots[[2]],  nrow=2)
 
 plot(a)
+#################################################################################
 
+
+#################################################################################
+
+# create population gene maps from lab strain yeast and 96 random other strains
+# contains centi?morgan distances of markers, genomic positions, and MAFs
 
 set.seed(1)
+# get a vector of yeast strains with standard lab strain + 96 random samples w/ 3 letter codes
+# p.names == parent names?
 p.names=c('S288C', sample(colnames(gt),96))
-#p.names=c('S288C', 'AAA')
 mating.matrix=matrix(c(1,2), nrow=1)
 # in this case, given one-way cross, potentially allow N2 herm to self 
 selfings=1
 
 gmapList=list()
+
+# create cohort gene maps for each strain and lab strain
+# i guess to get pairwise segregated sites?
+
 for(i in 1:(length(p.names)-1) ) {
+# loop through all 97 sampled parent strains
     print(i)
+# xQTLSims/r/helperFxs.R
+# build a founder population for lab strain and current for loop parent strain
+# extract only segregating sites from vcf and extract genotype information for subsets of parent strains
+# then build alphaSimR inbred diploid genome founder population ready for simluation
+# ig inbred diploid bc of similarites between lab and test strain??
+# basically build a population containing genotypes of both strains that can be used for simulation
     FB=createFounderPop(vcf,gt,p.names[c(1,i+1)],gmap, X.drop=F)
+# initialize SimParam object to hold simulation params
+# standard alphaSimR
     SP=SimParam$new(FB)
+# get genetic maps from the founder population
+# cgm == cohort genetic map?
+# ex:
+#>      id chr       pos
+#> 1   1_1   1 0.0000000
+#> 2   1_2   1 0.1111111
     cgm=getGenMap(FB)
+# pull out genomic position along chrom
     cgm$ppos=as.numeric(data.table::tstrsplit(cgm$id,'_')[[2]])
+# add cohort gene map for each parent strain into list
     gmapList[[p.names[i+1]]]=cgm
 }
+
+# take the mega gene map from the founder population, transform  it, and add in
+# real mafs
+
+# combine all the parent strain gene maps into one data.table
+# idcol holds name of parent strain
 mega_gmap=data.table::rbindlist(gmapList, idcol='cross')
+# turn chrom into factor
 mega_gmap$chr=factor(mega_gmap$chr, levels=paste0('chr', as.roman(1:16)) )
+# order it by chrom then genomic position
 mega_gmap=mega_gmap[order(mega_gmap$chr, mega_gmap$ppos),]
-
-genMap=mega_gmap[-which(duplicated(mega_gmap$id)),]
-genMap=genMap[,-1]
+# remove duplicated genomic markers
+genmap=mega_gmap[-which(duplicated(mega_gmap$id)),]
+# remove the first col, `cross` that contains parent strain
+genMap=genmap[,-1]
+# add in maf to each marker gene
+# mafs come from mega filtered cohort vcf, so its real measured allele frequencies
 genMap$maf=maf[match(genMap$id, names(maf))]
+#> head(genMap)
+#          id    chr          pos  ppos         maf
+#      <char> <char>        <num> <num>       <num>
+#1:  chrI_968   chrI 0.000000e+00   968 0.457738749
+#2:  chrI_978   chrI 1.094340e-08   978 0.021208908
 
-#founderPop = createFounderPop(vcf,gt, p.names, gmap, X.drop=F) #c('N2', 'XZ1516'))
-#SP=SimParam$new(founderPop)
-#FN=newPop(founderPop, simParam=SP)
-#there's a structure here for keeping track of males that we are only partially leveraging
-#FN@sex[2]='M'
 
-#genMap=getGenMap(founderPop)
-#g.s=pullMarkerGeno(founderPop[1:97], genMap$id)
+#################################################################################
 
-#possible QTL architectures for fitness effects ---------------------
+#possible QTL architectures for fitness effects
+
 nmarker=nrow(genMap)
 #for example a TA element
+# number of QTL to set?
 f.nQTL=1
-#sample(genMap$id, nQTL)
+# set number of additive QTL as the number of total QTL
 f.nadditive=f.nQTL
+# pull out the gene map info for the chosen additive qtl
 f.add.qtl.ind  = genMap$id[sort(sample(nmarker, f.nadditive))]
+# randomly choose effect of qtl either -1 or 1
+# represents fitness effects
 f.add.qtl.eff =  sample(ifelse(runif(f.nadditive)>.5,-1,1),replace=T)
-#---------------------------------------------------------------------
 
-#possible QTL architectures for traits orthogonal to fitness 
+#################################################################################
+
+# possible QTL architectures for traits orthogonal to fitness 
+# assign rare / common QTL
 
 set.seed(10)
 
-# number of large effect QTL
-
-o.nQTL.r=750
-o.nQTL.c=o.nQTL.r/4
+# number of large effect QTL (rare variants)
+o.nQTL.r=75
+# set another group of QTL as a quarter of r (common variants)
+o.nQTL.c=25
+# set additive effect sizes for r and c QTL groups
 o.add.qtl.r.e=1
 o.add.qtl.c.e=.5
 
+# pull out indicies of R group QTL from gen map
+# pulling out markers that have a low MAF; rare variants
 o.add.qtl.ind.r = sample(genMap$id[genMap$maf<.025], o.nQTL.r)
+# actually pulling out info from gene map for rare variants
 o.add.qtl.ind.r=   genMap$id[sort(match(o.add.qtl.ind.r, genMap$id))]
+# randomly assign rare QTL effects of -1 or 1
 o.add.qtl.eff.r =  sample(ifelse(runif(o.nQTL.r)>.5,-o.add.qtl.r.e, o.add.qtl.r.e),replace=T)
 
+# pull out indicies of C group QTL from gen map
+# pulling out markers that have a higher MAF; common variants
+# make sure QTL arent already assigned rare
 o.add.qtl.ind.c = sample(genMap$id[genMap$maf>.025 & !(genMap$id %in% o.add.qtl.ind.r)], o.nQTL.c)
+# pull out gene map info
 o.add.qtl.ind.c=   genMap$id[sort(match(o.add.qtl.ind.c, genMap$id))]
+# randomly assign common QTL effects of -0.5 or 0.5
 o.add.qtl.eff.c =  sample(ifelse(runif(o.nQTL.c)>.5,-o.add.qtl.c.e, o.add.qtl.c.e),replace=T)
 
+# create indice / effect vectors for rare and common QTL
+# basically map gene marker name to effects
 o.add.qtl.ind=c(o.add.qtl.ind.r, o.add.qtl.ind.c)
 o.add.qtl.eff=c(o.add.qtl.eff.r, o.add.qtl.eff.c)
 
+#################################################################################
 
+# set the QTL simulation params
 
-#f designates QTL effects for hermaphrodites 
+# designates QTL effects for hermaphrodites 
 QTL.sims=list(#simulate fitness effects during panel construction ------------------------
               sim.fitness=F,
               #positions of fitness effect QTL
@@ -293,78 +522,84 @@ QTL.sims=list(#simulate fitness effects during panel construction --------------
               # trait variance such that residual error is 1-h^2
               o.h2.norm=F,
               o.h2=.5)
-qsave(QTL.sims, file='/data0/xQTLSims/projects/yeast_sims/multibiparental/metaQTL.qs')
-#QTL.sims=qread('/data0/xQTLSims/projects/yeast_sims/metaQTL.qs')
+qsave(QTL.sims, file='/u/project/kruglyak/nmohamm/xQTLSims/projects/yeast_sims/multibiparental/metaQTL.qs')
 
+#################################################################################
 
-max.per.gen=1e5
+# actually do simulations!!
+
+max.per.gen=1e4
 depth=50
 sel.frac=.1
 meta.results=list()
+
+# loop through 96 parent strains
 for(i in 1:96) {
     #setup sims using mega pop then mini sims per biparental
+# create a founder pop again?
     FB=createFounderPop(vcf,gt,p.names[c(1,i+1)],gmap, X.drop=F)
+# setup object to hold sim params
     SP=SimParam$new(FB)
+# get initial gene map from the founder pop
     genMaps=getGenMap(FB)
+# generate initial population of animals from haplotype info from founderpop
+# founderpop contains lab strain + random strain
     FB=newPop(FB, simParam=SP)
+# actually make the cross between strain 1 and strain 2
+# guessing lab strain + other strain?
+# use simparams specified above, and only 1 progeny per cross
     f1=makeCross(FB, matrix(rep(c(1,2), each=1), ncol=2) , nProgeny=1, simParam=SP)
-    f2=makeDH(f1, nDH=max.per.gen, simParam=SP) #matrix(rep(c(1,2), each=1), ncol=2) ,
+# make double haploid from the f1, max.per.gen per each indiv in the founder pop
+# basically make a ton of double haploids from the F1, that are homozygous across all loci
+# hack to get haploids
+    f2=makeDH(f1, nDH=max.per.gen, simParam=SP) 
     FR=f2
 
-#    m1=(sample.int(max.per.gen, round(max.per.gen/2)))
-#    m2=which(!(seq(1,max.per.gen) %in% m1))
-#    mmat=cbind(m1,m2)
-#    f3=makeCross(f2, mmat, nProgeny=1,simParam=SP)
-    #end pop about 50k
-#    f4=makeDH(f3, nDH=2, simParam=SP) #matrix(rep(c(1,2), each=1), ncol=2) , nProgeny=1, simParam=SP)
+# add in QTL effects with whatever was specified above
+# from xQTLSims/R/helperFxs.R
+# inputs: double haploid F2 with lab strain + random strain population object, marker names from pop gene map, simulation params containing QTL effects to push
+# outputs:
+#	ds: indicies of indivs from pop that are used to simulate phenotype
+#	h2: calculated narrow sense heritability
+#	X_Q: genotypes of indivs that will have QTL effects added
+#	simy: phenotypes of indivs after adding in all types of QTL
 
-    #max.per.gen=48000
-#    m1=(sample.int(max.per.gen, round(max.per.gen/2)))
-#    m2=which(!(seq(1,max.per.gen) %in% m1))
-#    mmat=cbind(m1,m2)
-#    f5=makeCross(f4, mmat, nProgeny=1,simParam=SP)
-    #end pop about 50k
-#    f6=makeDH(f5, nDH=2, simParam=SP) #matrix(rep(c(1,2), each=1), ncol=2) , nP
+# get current genotype info from specified QTL from FR
+# add QTL effects to genotype? not entirely sure if genotype from pullMarkerGeno is genotype effect?
+# get actual updated phenotype measures after jittering with standard deviation
+# calculate phenotypic variance
 
-    #max.per.gen=48000
-#    m1=(sample.int(max.per.gen, round(max.per.gen/2)))
-#    m2=which(!(seq(1,max.per.gen) %in% m1))
-#    mmat=cbind(m1,m2)
-#    f7=makeCross(f6, mmat, nProgeny=1,simParam=SP)
-    #end pop about 50k
-#    f8=makeDH(f7, nDH=2, simParam=SP) #matrix(rep(c(1,2),
-
-#    FR=f2
-  
     simFR=simPheno(FR, genMapMarkers=genMaps$id, QTL.sims=QTL.sims, returnG=F)
-    
-    #g.full=pullMarkerGeno(FR[1:5e3], genMaps$id)
-  #  summary(lm(simFR$simy[1:5000,1]~simFR$X_Q[1:5000,])) #[1:5000,1:9]))
-  #  cor(simFR$simy[,1],simFR$X_Q[,1])^2
-  #  cor(simFR$simy[,1],simFR$X_Q[,3])^2
-
-    #lm(simFR$simy~simFR$X_Q)
-    #summary(lm(simFR$simy~simFR$X_Q)
-    #bigm=(lm(simy~X_Q, data=simFR))
-    #drop1(bigm, "X_QchrII_702504")
-
-  #  summary(lm(simFR$simy[1:5000,1]~simFR$X_Q[1:5000,1:9]))
-
-    #susie with individual level data 
-    #50x = 2e6 reads per sample 
-    #100x = 4e6 reads per sample 
-    #200x = 8e6 reads per sample
-    #400x = 16e6 reads per sample
+#saveRDS(simFR, "/u/project/kruglyak/nmohamm/xQTLSims/projects/yeast_sims/multibiparental/single_cross_data.RDS")
+#tot_genos <- pullSegSiteGeno(FR)
+#saveRDS(tot_genos, "/u/project/kruglyak/nmohamm/xQTLSims/projects/yeast_sims/multibiparental/single_cross_tot_genos.RDS")
+   
+#xQTLSims/R/helperFxs.R
+# look through all markers and given phenotypes, calculate ref and alt allele counts for all markers
+#if you set sel.frac=1 sample the population of existing genotypes without QTL effects 
+# h = high?
+# ex:
+#                ID expected ref alt
+#chrI_968   chrI_968    0.488  22  28
+#chrI_978   chrI_978    0.488  16  29
+#chrI_980   chrI_980    0.488  29  29
     countdf.h=simSequencingRefAlt(simFR$simy,FR, genMaps$id, depth=depth, sel.frac=sel.frac, lower.tail=F)
-    #if you set sel.frac=1 sample the population of existing genotypes without QTL effects 
-    #countdf.l=simSequencingRefAlt(y=NULL, FR,genMaps$id, depth=depth, sel.frac=1 , lower.tail=F)
+# sample some indicies from the total number of f2
     ds.ind=sort(sample(max.per.gen, max.per.gen*sel.frac))
+# count allele frequences from a subset of f2 where the simulated phenotype is NULL
+# l = low?
     countdf.l=simSequencingRefAlt(y=NULL, FR[ds.ind],genMaps$id, depth=depth, sel.frac=1 , lower.tail=F)
 
+# phase each marker with BY strain
+# BY is ref and other strain is alt so you actually phase with both strains
+# do this for both high and low?
+# ex:
+#                 ID expected ref alt expected.phased p1 p2
+#chrI_968   chrI_968    0.488  22  28           0.488 22 28
+#chrI_978   chrI_978    0.488  16  29           0.488 16 29
+#chrI_980   chrI_980    0.488  29  29           0.488 29 29
     countdf.h=phaseBiparental(countdf.h, p.names[1], FB, genMaps)
     countdf.l=phaseBiparental(countdf.l, p.names[1], FB, genMaps)
-  #  plot(countdf.h$p1/(countdf.h$p1+countdf.h$p2))
-  #  points(countdf.h$expected, col='red') #alt/(countdf$al
 
 #-----------------------------
      test  = calcAFD(countdf.h, experiment.name='high1',sample.size=1e4, bin.width=500, sel.strength=.1, uchr=unique(genMaps$chr) ) 
@@ -385,15 +620,18 @@ for(i in 1:96) {
 #    est$pip[na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g)))]
 #-----------------------------------------------------------------
     
+# pull out alt and ref counts for every marker
+# idk what h and c are, high and low?
+# h = high, c = control?
     acnt.h=countdf.h$alt
-    rcnt.h=countdf.h$ref #(nrow(G.h)*2)-acnt.h
+    rcnt.h=countdf.h$ref
 
-    acnt.c=countdf.l$alt #colSums(G.c)
-    rcnt.c=countdf.l$ref #(nrow(G.c)*2)-acnt.c
+    acnt.c=countdf.l$alt
+    rcnt.c=countdf.l$ref
 
-    #145
-    #library(RVAideMemoire)
-    #i=171974
+# calculate chi squared statistic and its p value
+# chisq in this case is determining sig differences between alt and ref counts for each parent?
+# are there differences in allele counts found in the f2 based on allele counts of each parent?
     chisq=chisq.p=rep(NA, length(acnt.h))
     for(j in 1:length(acnt.h)){
         if(j%%10000==0) { print(j)} 
@@ -408,51 +646,62 @@ for(i in 1:96) {
     sgn=-1*((((acnt.h/rcnt.h)/(acnt.c/rcnt.c)>1)*2)-1)
  #   plot(sgn*chisq)
   
+# calculate z score from chisq
     results$rawZ=sgn*sqrt(chisq)
     
+# set base values for conditional z and pip
     results$zcond=0
     results$pip=0
 
-    
+# Use Susie RSS for sumstat based fine mapping
     for(schr in uchr) {
         print(schr)
         #schr='chrV'
+# get genotypes of certain f2 org at given chromosome
         g=pullMarkerGeno(FR[ds.ind], genMaps$id[genMaps$chr==schr])
+# scale so mean is 0 and standardize to sd of 1 for susie
         sg=scale(g)
+# LD corr matrix, used in susie rss
         LD= crossprod(sg)/(nrow(sg)-1)
+# calc eigen values / vectors of LD?
         attr(LD, 'eigen')=eigen(LD, symmetric=T)
         length(na.omit(match(QTL.sims$o.add.qtl.ind, genMaps$id)))
         na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g)))
   
         zsub=results$rawZ[results$chrom==schr]
-        #zsub=results$z[results$chrom==schr]
-        #zsub[is.na(zsub)]=zsub[!is.na(zsub)][1]
-        #est2=susie_rss(z=zsub,  R=LD, n=5e3, L=10, verbose=T, estimate_residual_variance=T)
+
+# susie rss stuff
        
         lambda=estimate_s_rss(zsub, LD, n=1e4)
         condz_in=kriging_rss(zsub, LD, n=1e4, s=lambda)
         zcond=condz_in$conditional_dist$condmean/sqrt(condz_in$conditional_dist$condvar)
    
-        par(mfrow=c(2,1))
-        plot(zsub)
-        points(zcond, col='blue')
-        abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
+        #par(mfrow=c(2,1))
+        #plot(zsub)
+        #points(zcond, col='blue')
+        #abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
 
         est=susie_rss(z=zcond,  R=LD, n=5e3, L=10, verbose=T, estimate_residual_variance=T)
 
-        plot(est$pip, col='red')
-        abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
-        dev.off()
+        #plot(est$pip, col='red')
+        #abline(v=na.omit(match(QTL.sims$o.add.qtl.ind, colnames(g))), col=abs(QTL.sims$o.add.qtl.eff[QTL.sims$o.add.qtl.ind %in% colnames(g)])*4)
+        #dev.off()
 
         results$pip[results$chrom==schr]=est$pip
         results$zcond[results$chrom==schr]=zcond
   
     }
+# save results for plotting stuff 
+#saveRDS(results, "/u/home/n/nmohamm/project-kruglyak/xQTLSims/projects/yeast_sims/multibiparental/one_cross_results.RDS")
+#results <- readRDS("/u/home/n/nmohamm/project-kruglyak/xQTLSims/projects/yeast_sims/multibiparental/one_cross_results.RDS")
     x11()
     par(mfrow=c(2,1))
     plot(results$rawZ, col='grey')
     points(results$zcond, col='blue')
-
+#saveRDS(QTL.sims, "/u/home/n/nmohamm/project-kruglyak/xQTLSims/projects/yeast_sims/multibiparental/qtl_sims_params.RDS")
+#QTL.sims <- readRDS("/u/home/n/nmohamm/project-kruglyak/xQTLSims/projects/yeast_sims/multibiparental/qtl_sims_params.RDS")
+#saveRDS(genMaps, "/u/home/n/nmohamm/project-kruglyak/xQTLSims/projects/yeast_sims/multibiparental/genmaps.RDS")
+#genMaps <- readRDS("/u/home/n/nmohamm/project-kruglyak/xQTLSims/projects/yeast_sims/multibiparental/genmaps.RDS")
     abline(v=match(QTL.sims$o.add.qtl.ind, genMaps$id), col=abs(QTL.sims$o.add.qtl.eff)*2)
     
     plot(results$pip)
@@ -465,11 +714,15 @@ for(i in 1:96) {
 
 #issue with seeing segregating sites that don't exist in founder map, fix this
 
+# set z, pip, and lod vars for ALL crosses
 meta.z=meta.pip=meta.lod=matrix(NA, nrow=nrow(genMap), ncol=length(meta.results))
+# set rows as marker names and cols as cross names
 rownames(meta.z)=rownames(meta.z)=rownames(meta.lod)=genMap$id
 colnames(meta.pip)=colnames(meta.z)=colnames(meta.lod)=names(meta.results)
+# populate z, pip, and lod vectors for all crosses
 for(n in names(meta.results)){
     #n=names(meta.results)[1]
+    print(n)
     mr=meta.results[[n]]
     rmatch=match(mr$ID, rownames(meta.z))
     mrz=mr$zcond[which(!is.na(rmatch))]
